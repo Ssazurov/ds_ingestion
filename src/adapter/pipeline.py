@@ -98,6 +98,5 @@ def run_adapter(
             continue
         done.add(doc_id)
         report.ingested.append({"doc_id": doc_id, "document_id": result.get("document_id")})
-    if not dry_run:
-        _save_state(state_path, done)
+        _save_state(state_path, done)  # инкрементально: обрыв прогона не теряет уже загруженные doc_id
     return report
