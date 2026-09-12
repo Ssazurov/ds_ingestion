@@ -1,22 +1,57 @@
-"""Регистрация доменного профиля метаданных на датасете GAR (issue #5,
-ADR-001 п.2). Вызывается один раз при инициализации адаптера: заводит
-per-dataset metadata dictionary полей source_url/title/... и select-полей
-direction/category/doc_type/target_audience/license с опциями."""
+"""Bootstrap-регистрация доменного профиля метаданных на датасете GAR
+(issue #5, ADR-001 п.2).
+
+ВАЖНО (уточнено 2026-09-12, разбор alisa-i-chudesa.json): эталонная схема
+полей метаданных живёт в GAR (датасет sindrom-dauna), редактируется ТОЛЬКО
+через gar-admin-ui/gar-core-api. `ds_search/config/categories.yaml` и эта
+функция — не источник правды, а bootstrap для пустого/нового датасета:
+ensure_metadata_field идемпотентно ДОБАВЛЯЕТ отсутствующие поля/опции, но
+никогда не удаляет и не переименовывает уже существующие в GAR. Читать
+актуальную схему для валидации/классификации нужно из GAR напрямую —
+см. ds_search/src/metadata/gar_schema.py (issue #89), а не из categories.yaml.
+Направление синхронизации: GAR -> ds_search/categories.yaml (вручную,
+при необходимости), не наоборот."""
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 
 from .client import GarClient
+
+
+def _load_pkg(name: str, init_path: Path, search_dir: Path):
+    if name in sys.modules:
+        return sys.modules[name]
+    spec = importlib.util.spec_from_file_location(
+        name, init_path, submodule_search_locations=[str(search_dir)]
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def _load_domain_schema(ds_search_root: str):
     # Прямая загрузка по пути (importlib), а не через sys.path + "import src...":
     # имя пакета "src" совпадает у ds_ingestion и ds_search, что даёт коллизию
     # в sys.modules при запуске `python -m src.adapter.cli` из ds_ingestion.
-    schema_path = Path(ds_search_root).resolve() / "src" / "metadata" / "schema.py"
-    spec = importlib.util.spec_from_file_location("ds_search_metadata_schema", schema_path)
+    # schema.py делает `from .profile import ...` — относительный импорт,
+    # поэтому регистрируем src и src.metadata как настоящие пакеты в
+    # sys.modules (под уникальными именами), иначе exec_module падает с
+    # ImportError: attempted relative import with no known parent package.
+    root = Path(ds_search_root).resolve()
+    _load_pkg("_ds_search_src", root / "src" / "__init__.py", root / "src")
+    _load_pkg(
+        "_ds_search_src.metadata",
+        root / "src" / "metadata" / "__init__.py",
+        root / "src" / "metadata",
+    )
+    schema_path = root / "src" / "metadata" / "schema.py"
+    spec = importlib.util.spec_from_file_location("_ds_search_src.metadata.schema", schema_path)
     module = importlib.util.module_from_spec(spec)
+    module.__package__ = "_ds_search_src.metadata"
+    sys.modules["_ds_search_src.metadata.schema"] = module
     spec.loader.exec_module(module)
     categories = sorted({c for cats in module.load_categories().values() for c in cats})
     return (
