@@ -26,8 +26,12 @@ _SKIP_CONTENT_STATUSES = {"rejected_thin_content"}
 _METADATA_KEYS = (
     "source_url", "source_domain", "title", "direction", "license",
     "attribution", "category", "doc_type", "target_audience", "author",
-    "publish_date", "description", "keywords", "age_group",
+    "publish_date", "description", "keywords", "age",
 )
+# "age_group" -- устаревший текстовый ключ, неактивен в текущем словаре
+# metadata-fields sindrom-dauna (см. GET /datasets/.../metadata-fields);
+# активное required select-поле называется "age" (issue: разбор
+# alisa-i-chudesa.json, gar_mapping.yaml так и не использовал age_group).
 
 
 @dataclass
