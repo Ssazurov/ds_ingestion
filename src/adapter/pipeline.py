@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -32,6 +33,64 @@ _METADATA_KEYS = (
 # metadata-fields sindrom-dauna (см. GET /datasets/.../metadata-fields);
 # активное required select-поле называется "age" (issue: разбор
 # alisa-i-chudesa.json, gar_mapping.yaml так и не использовал age_group).
+
+# Select-поля, которые нужно нормализовать под актуальные опции GAR
+# (значения в sidecar-json могут быть русскими label, а backend ожидает value).
+_NORMALIZE_SELECT_KEYS = ("direction", "category", "doc_type", "target_audience", "license")
+
+
+def _normalize_key(value: object) -> str:
+    """Нормализовать ключ для маппинга: casefold + схлопнуть пробелы."""
+    return re.sub(r"\s+", " ", str(value or "").strip()).casefold()
+
+
+def _build_select_mapping(client: GarClient, dataset_id: str) -> dict[str, dict[str, str]]:
+    """Собрать маппинг label->value для всех активных select-полей датасета.
+
+    Ключи маппинга нормализованы (casefold), чтобы русские label в разном
+    регистре из sidecar-json матчились с опциями GAR.
+    """
+    fields = client.list_metadata_fields(dataset_id)
+    print(f"DEBUG select_mapping field keys: {list(fields.keys())}", flush=True)
+    mapping: dict[str, dict[str, str]] = {}
+    for key, field in fields.items():
+        if field.get("value_type") != "select":
+            continue
+        field_mapping: dict[str, str] = {}
+        for option in field.get("options", []):
+            if not option.get("active", True):
+                continue
+            value = option.get("value", "")
+            label = option.get("label", "")
+            if value:
+                field_mapping[_normalize_key(value)] = value
+            if label:
+                field_mapping[_normalize_key(label)] = value
+        mapping[key] = field_mapping
+    print(f"DEBUG select_mapping keys: {list(mapping.keys())}", flush=True)
+    for k, v in mapping.items():
+        print(f"DEBUG {k}: {list(v.keys())[:5]}...", flush=True)
+    return mapping
+
+
+def _normalize_payload(payload: dict, mapping: dict[str, dict[str, str]]) -> dict:
+    """Нормализовать значения select-полей под актуальные опции GAR.
+
+    Если значение не найдено в маппинге — поле исключается из payload,
+    чтобы не отправлять в backend невалидное значение и получить 422.
+    """
+    result = dict(payload)
+    for key in _NORMALIZE_SELECT_KEYS:
+        if key not in result:
+            continue
+        field_mapping = mapping.get(key, {})
+        value = result[key]
+        normalized = field_mapping.get(_normalize_key(value))
+        if normalized is not None:
+            result[key] = normalized
+        else:
+            del result[key]
+    return result
 
 
 @dataclass
@@ -70,6 +129,7 @@ def run_adapter(
     """
     report = IngestReport()
     done = _load_state(state_path)
+    select_mapping = _build_select_mapping(client, dataset_id)
     for doc_id, json_path in _iter_source_docs(source_dir):
         if doc_id in done:
             report.skipped.append({"doc_id": doc_id, "reason": "already_ingested"})
@@ -87,7 +147,12 @@ def run_adapter(
         except UnsupportedFormatError as exc:
             report.failed.append({"doc_id": doc_id, "error": str(exc)})
             continue
-        payload = {k: meta.get(k) for k in _METADATA_KEYS if meta.get(k) is not None}
+        payload = _normalize_payload(
+            {k: meta.get(k) for k in _METADATA_KEYS if meta.get(k) is not None},
+            select_mapping,
+        )
+        if doc_id == "prosto-zhit-i-lyubit":
+            print(f"DEBUG payload for {doc_id}: {payload}", flush=True)
         if dry_run:
             report.ingested.append({"doc_id": doc_id, "dry_run": True, "metadata": payload})
             continue

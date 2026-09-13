@@ -47,6 +47,15 @@ def _load_domain_schema(ds_search_root: str):
         root / "src" / "metadata" / "__init__.py",
         root / "src" / "metadata",
     )
+    # profile.py — модуль без __init__.py; задаём __package__ вручную,
+    # иначе `from .profile import LIFECYCLE_STAGES` в schema.py не найдёт родителя.
+    profile_spec = importlib.util.spec_from_file_location(
+        "_ds_search_src.metadata.profile", root / "src" / "metadata" / "profile.py"
+    )
+    profile_module = importlib.util.module_from_spec(profile_spec)
+    profile_module.__package__ = "_ds_search_src.metadata"
+    sys.modules["_ds_search_src.metadata.profile"] = profile_module
+    profile_spec.loader.exec_module(profile_module)
     schema_path = root / "src" / "metadata" / "schema.py"
     spec = importlib.util.spec_from_file_location("_ds_search_src.metadata.schema", schema_path)
     module = importlib.util.module_from_spec(spec)
