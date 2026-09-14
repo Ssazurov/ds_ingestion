@@ -3,17 +3,18 @@
 Запуск: uvicorn src.adapter.api:app --port 8200
 Контракт вызывающей стороны (ADR-0005: админка только в ds_search/ui
 Streamlit, не ds_site): ds_search дергает этот эндпоинт напрямую.
-Auth: не реализован -- прода нет, см. ADR-0007 п.4.
+Auth: X-Ingestion-Key + rate-limit per doc_id, см. ADR-0008.
 """
 from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel
 
 from ..gar_client.client import GarClient
 from ..gar_client.config import load_settings
+from .auth import check_auth, check_rate_limit
 from .reload import ReloadError, reload_document, resolve_source_doc
 
 app = FastAPI(title="ds_ingestion")
@@ -53,16 +54,18 @@ def _do_reload(settings, source: str, doc_id: str) -> dict:
     }
 
 
-@app.post("/reload")
+@app.post("/reload", dependencies=[Depends(check_auth)])
 def reload_endpoint(body: ReloadRequest) -> dict:
+    check_rate_limit(f"{body.source}/{body.doc_id}")
     settings = load_settings()
     return _do_reload(settings, body.source, body.doc_id)
 
 
-@app.post("/reload_by_gar_id")
+@app.post("/reload_by_gar_id", dependencies=[Depends(check_auth)])
 def reload_by_gar_id_endpoint(body: ReloadByGarIdRequest) -> dict:
     """Для кнопки в ds_search/ui: резолвит source/doc_id по gar_document_id
     среди всех *.ingested.json, затем делает обычный reload."""
+    check_rate_limit(body.gar_document_id)
     settings = load_settings()
     data_dir = Path(__file__).resolve().parents[2] / "data"
     try:
