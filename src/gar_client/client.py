@@ -107,3 +107,18 @@ class GarClient:
         if resp.status_code != 200:
             raise GarClientError(f"ingest {file_path.name} failed: {resp.status_code} {resp.text}")
         return resp.json()
+
+    def get_document(self, document_id: str) -> dict:
+        """issue #8: текущая запись GAR для diff при reload."""
+        resp = self._client.get(f"/ingestion/documents/{document_id}")
+        if resp.status_code != 200:
+            raise GarClientError(f"get document {document_id} failed: {resp.status_code} {resp.text}")
+        return resp.json()
+
+    def update_document_metadata(self, document_id: str, metadata: dict) -> dict:
+        """issue #8, ADR-0007: update-in-place по gar_document_id (PATCH метаданных,
+        content не заменяется -- gar-core-api не даёт PUT контента, см. reload.py)."""
+        resp = self._client.patch(f"/ingestion/documents/{document_id}", json={"metadata": metadata})
+        if resp.status_code != 200:
+            raise GarClientError(f"update document {document_id} failed: {resp.status_code} {resp.text}")
+        return resp.json()

@@ -108,15 +108,23 @@ class IngestReport:
     failed: list[dict] = field(default_factory=list)
 
 
-def _load_state(state_path: Path) -> set[str]:
+def _load_state(state_path: Path) -> dict[str, str | None]:
+    """doc_id -> gar_document_id (issue #8, ADR-0007: reload нужен id для PATCH).
+
+    Legacy-формат (список doc_id без gar_document_id) читается как
+    {doc_id: None} и при следующем успешном ingest дозаполняется.
+    """
     if not state_path.exists():
-        return set()
-    return set(json.loads(state_path.read_text(encoding="utf-8")))
+        return {}
+    raw = json.loads(state_path.read_text(encoding="utf-8"))
+    if isinstance(raw, list):
+        return {doc_id: None for doc_id in raw}
+    return dict(raw)
 
 
-def _save_state(state_path: Path, doc_ids: set[str]) -> None:
+def _save_state(state_path: Path, state: dict[str, str | None]) -> None:
     state_path.parent.mkdir(parents=True, exist_ok=True)
-    state_path.write_text(json.dumps(sorted(doc_ids)), encoding="utf-8")
+    state_path.write_text(json.dumps(state, ensure_ascii=False, sort_keys=True), encoding="utf-8")
 
 
 def _iter_source_docs(source_dir: Path):
@@ -175,7 +183,7 @@ def run_adapter(
             logger.error("ingest failed for %s: %s", doc_id, exc)
             report.failed.append({"doc_id": doc_id, "error": str(exc)})
             continue
-        done.add(doc_id)
+        done[doc_id] = result.get("document_id")
         report.ingested.append({"doc_id": doc_id, "document_id": result.get("document_id")})
         _save_state(state_path, done)  # инкрементально: обрыв прогона не теряет уже загруженные doc_id
     return report

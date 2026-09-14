@@ -1,3 +1,38 @@
+## 2026-09-14 -- Epic #7: Full source reload pipeline (root ADR-0007)
+
+- Root ADR: `ds/docs/adr/0007-full-source-reload-pipeline.md` (update-in-place
+  по gar_document_id, state обновляется только после успешного ingest).
+- Epic ds_ingestion#7, подзадачи: ds_ingestion#8 (POST /reload endpoint),
+  ds_search#141 (re-crawl по URL), ds_search#142 (устойчивый детект битых
+  файлов), ds_site#23 (кнопка в админке). Все добавлены в projects/4.
+- Триггер: найдены файлы в ds_search/data/raw/family_support с буквальными
+  \n вместо переносов строк (5 исправлено вручную и перезалито в GAR через
+  ds_ingestion adapter). Ещё 11 файлов с полным отсутствием переносов не
+  перезалиты -- ждут реализации #8.
+- **issue #8 реализован**: `POST /reload {source, doc_id}` (`src/adapter/api.py`,
+  FastAPI, `uvicorn src.adapter.api:app`). Логика в `src/adapter/reload.py`:
+  re-classify локального sidecar-json -> diff с текущей записью GAR
+  (`GarClient.get_document`) -> поля, отсутствующие в новом выводе классификатора,
+  но присутствующие в старой записи, переносятся as is (ручные правки не
+  затираются) -> `GarClient.update_document_metadata` (PATCH). При сбое любого
+  шага state не трогается.
+- State-файлы `<source>.ingested.json` сменили формат: список doc_id ->
+  `{doc_id: gar_document_id}` (нужен id для PATCH). Старый list-формат читается
+  как `{doc_id: None}` (backward-compat), при следующем успешном ingest
+  дозаполняется. Записи с `None` (созданные до этого изменения) требуют
+  повторного полного ingest перед reload -- `reload_document` кидает понятную
+  ошибку в этом случае.
+- **Блокер (не устранён в рамках #8)**: gar-core-api не даёт заменить бинарный
+  контент документа по существующему `document_id` -- есть только PATCH
+  метаданных и POST с `supersedes_document_id` (создаёт НОВЫЙ id, что запрещено
+  ADR-0007 п.1). Поэтому `/reload` сейчас обновляет только метаданные;
+  исправление "битого" контента (буквальный `\n`, см. ADR-0007 п.3) этим
+  эндпоинтом не решается. Нужна доработка gar-core-api (PUT/replace content по
+  document_id) -- заведён как отдельный блокер, см. комментарий в issue #8.
+- Тесты: `tests/test_reload.py` (6 кейсов: preserve/changed, missing source,
+  doc_id не в state, legacy state без gar_document_id, сбой update). Прогон
+  против реального gar-core-api не выполнялся.
+
 ## 2026-09-14 -- issue #2: lifecycle-метаданные (ADR-0002) в ingestion
 
 - `src/gar_client/metadata_fields.py`: `ensure_domain_schema` регистрирует
