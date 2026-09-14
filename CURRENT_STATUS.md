@@ -1,3 +1,24 @@
+## 2026-09-14 -- issue #11: PUT content в reload_document (снят блокер #8)
+
+- gar-core-api PR #317 добавил `PUT /ingestion/documents/{document_id}/content`
+  (update-in-place, id сохраняется) -- блокер, описанный ниже в записи по #8,
+  снят.
+- `GarClient.update_document_content(document_id, file_path)` — вызывает
+  новый эндпоинт. `reload_document()` теперь всегда вызывает его после
+  успешного PATCH metadata (полный re-index Docling/chunker/Qdrant).
+  `ReloadReport.content_replaced: bool` добавлен.
+- Условный skip по content-хешу не добавлен: reload -- намеренное ручное
+  действие "перезалить статью", GAR-схема не хранит content_hash.
+- **Live-проверка выполнена** (локальный gar-core-api, 127.0.0.1:8100,
+  пришлось перезапустить процесс -- старый воркер был поднят до мержа PR
+  #317/#316 в gar-core-api и не видел новый роут, 404): ingest + reload
+  реальной статьи `family_support/alisa-i-chudesa` во временном source_dir/
+  state (`/tmp/reload_live_test`, не влияет на прод state) —
+  `content_replaced=True`, `status=indexed`, `updated_at` обновился,
+  `document_id` стабилен между ingest и reload.
+- Тесты: `tests/test_reload.py` — 6/6 passed.
+- PR: Ssazurov/ds_ingestion#12, Closes #11.
+
 ## 2026-09-14 -- Epic #7: Full source reload pipeline (root ADR-0007)
 
 - Root ADR: `ds/docs/adr/0007-full-source-reload-pipeline.md` (update-in-place
