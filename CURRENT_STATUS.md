@@ -91,3 +91,19 @@
   `gar-core-api`, so retry could create a duplicate document.
 - `GAR_REQUEST_TIMEOUT_S` remains configurable and defaults to `660` seconds,
   matching the documented `gar-docling-intake` subprocess limit plus margin.
+
+## 2026-09-14 -- auth + rate-limit для /reload (ADR-0008, issue #9)
+
+- ADR-0008 (root `ds/docs/adr/`, т.к. контракт ds_search↔ds_ingestion):
+  shared secret `X-Ingestion-Key` (сравнение через `secrets.compare_digest`)
+  + in-memory rate-limit (1 reload/doc/60s, общий лимит 20/мин), без Redis.
+- `src/adapter/auth.py`: `check_auth` (FastAPI dependency), `check_rate_limit`.
+  `INGESTION_API_KEY` из env; при `ENV=prod` без ключа -- fail-fast при импорте.
+- `src/adapter/api.py`: `/reload`, `/reload_by_gar_id` -- `Depends(check_auth)`
+  + вызов `check_rate_limit` внутри хендлера.
+- `ds_search/ui/materials_tab.py`: `_reload_from_source` шлёт заголовок
+  `X-Ingestion-Key` из `DS_INGESTION_API_KEY`, если задан.
+- `.env.example`: добавлены `ENV`, `INGESTION_API_KEY`.
+- Тесты: `tests/test_auth.py` (401 без/с неверным ключом, 429 при повторе,
+  fail-fast в prod без ключа) -- 4 passed. Полный прогон: 15 passed.
+- Разблокирует прод-выкатку issue #8 (см. ADR-0007 п.4).
