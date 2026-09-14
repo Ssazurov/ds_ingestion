@@ -30,6 +30,18 @@ class ReloadError(RuntimeError):
     """Recoverable reload failure (не найден doc/source/gar_document_id)."""
 
 
+def resolve_source_doc(data_dir: Path, gar_document_id: str) -> tuple[str, str]:
+    """Обратный поиск (source, doc_id) по gar_document_id среди *.ingested.json
+    (issue ds_search#23 / ADR-0007 п.4: кнопка в админке знает только
+    gar_document_id из карточки материала, не локальный source/doc_id)."""
+    for state_path in sorted(data_dir.glob("*.ingested.json")):
+        state = _load_state(state_path)
+        for doc_id, gid in state.items():
+            if gid == gar_document_id:
+                return state_path.stem.removesuffix(".ingested"), doc_id
+    raise ReloadError(f"no local source/doc_id found for gar_document_id={gar_document_id!r}")
+
+
 @dataclass
 class ReloadReport:
     doc_id: str
