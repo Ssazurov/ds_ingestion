@@ -18,7 +18,9 @@ from __future__ import annotations
 import json
 import logging
 import hashlib
+import shutil
 import threading
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -111,6 +113,29 @@ def _merge_metadata(old_gar: dict, old_source: dict, new: dict) -> tuple[dict, d
     return merged, changed, preserved
 
 
+def _backup_source(source_dir: Path, json_path: Path, content_path: Path, correlation_id: str) -> Path:
+    """Save pre-reload source files for operator recovery."""
+    backup_dir = source_dir / ".reload-backups" / correlation_id
+    backup_dir.mkdir(parents=True, exist_ok=False)
+    shutil.copy2(json_path, backup_dir / json_path.name)
+    if content_path.is_file():
+        shutil.copy2(content_path, backup_dir / content_path.name)
+    return backup_dir
+
+
+def _write_manual_recovery(backup_dir: Path, document_id: str, error: Exception) -> None:
+    """Persist recovery instructions when metadata rollback also fails."""
+    (backup_dir / "manual_recovery.json").write_text(
+        json.dumps({
+            "status": "manual_recovery",
+            "document_id": document_id,
+            "error": str(error),
+            "backup_dir": str(backup_dir),
+        }, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
 @dataclass
 class ReloadReport:
     doc_id: str
@@ -166,6 +191,8 @@ def reload_document(
             content_path = Path(staged.get("content_path") or "")
             if not isinstance(staged_meta, dict) or not content_path.is_file():
                 raise ReloadValidationError("staged content or metadata is missing")
+            correlation_id = (staged.get("provenance") or {}).get("correlation_id") or str(uuid.uuid4())
+            backup_dir = _backup_source(source_dir, json_path, Path(meta.get("content_path") or ""), correlation_id)
             new_payload = _normalize_payload(
                 {k: staged_meta.get(k) for k in _METADATA_KEYS if staged_meta.get(k) is not None},
                 select_mapping,
@@ -196,7 +223,9 @@ def reload_document(
         except GarClientError as exc:
             try:
                 client.update_document_metadata(gar_document_id, old_meta)
-            except GarClientError:
+            except GarClientError as rollback_exc:
+                if recrawl is not None:
+                    _write_manual_recovery(backup_dir, gar_document_id, rollback_exc)
                 raise ReloadError(f"content replace failed; metadata rollback failed for {gar_document_id}") from exc
             raise ReloadError(f"content replace failed for {gar_document_id}: {exc}") from exc
 

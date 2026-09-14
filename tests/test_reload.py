@@ -173,3 +173,79 @@ def test_recrawl_rejects_unstable_doc_id_without_gar_update(tmp_path):
             },
         )
     assert client.updated_with is None
+
+
+def test_recrawl_keeps_backup_when_content_replace_fails(tmp_path):
+    import hashlib
+
+    canonical = "https://example.test/doc"
+    doc_id = hashlib.sha256(canonical.encode()).hexdigest()[:16]
+    source_dir = _write_source(tmp_path, doc_id, {
+        "source_url": canonical, "title": "Old", "content_path": str(tmp_path / "source" / f"{doc_id}.md"),
+    })
+    old_content = source_dir / f"{doc_id}.md"
+    old_content.write_text("old", encoding="utf-8")
+    state_path = _write_state(tmp_path, {doc_id: "gar-1"})
+    staged = tmp_path / "staged"
+    staged.mkdir()
+    new_content = staged / f"{doc_id}.md"
+    new_content.write_text("new", encoding="utf-8")
+    staged_meta = staged / f"{doc_id}.json"
+    staged_meta.write_text("{}", encoding="utf-8")
+    client = FakeClient(existing_metadata={"title": "Old"}, fail_content=True)
+
+    with pytest.raises(ReloadError, match="content replace failed"):
+        reload_document(client, "dataset-1", source_dir, state_path, doc_id,
+                        recrawl=lambda *_: {
+                            "doc_id": doc_id, "canonical_url": canonical,
+                            "content_path": str(new_content), "metadata_path": str(staged_meta),
+                            "metadata": {"title": "Fresh"},
+                            "provenance": {"correlation_id": "corr-1"},
+                        })
+
+    backup = source_dir / ".reload-backups" / "corr-1"
+    assert (backup / f"{doc_id}.json").read_text(encoding="utf-8")
+    assert (backup / f"{doc_id}.md").read_text(encoding="utf-8") == "old"
+
+
+def test_recrawl_marks_manual_recovery_when_metadata_rollback_fails(tmp_path):
+    import hashlib
+
+    canonical = "https://example.test/doc"
+    doc_id = hashlib.sha256(canonical.encode()).hexdigest()[:16]
+    source_dir = _write_source(tmp_path, doc_id, {
+        "source_url": canonical, "title": "Old", "content_path": str(tmp_path / "source" / f"{doc_id}.md"),
+    })
+    old_content = source_dir / f"{doc_id}.md"
+    old_content.write_text("old", encoding="utf-8")
+    state_path = _write_state(tmp_path, {doc_id: "gar-1"})
+    staged = tmp_path / "staged"
+    staged.mkdir()
+    new_content = staged / f"{doc_id}.md"
+    new_content.write_text("new", encoding="utf-8")
+    staged_meta = staged / f"{doc_id}.json"
+    staged_meta.write_text("{}", encoding="utf-8")
+
+    class RollbackFailClient(FakeClient):
+        def __init__(self):
+            super().__init__({"title": "Old"}, fail_content=True)
+            self.metadata_calls = 0
+
+        def update_document_metadata(self, document_id, metadata):
+            self.metadata_calls += 1
+            if self.metadata_calls == 2:
+                from src.gar_client.client import GarClientError
+                raise GarClientError("rollback unavailable")
+            return super().update_document_metadata(document_id, metadata)
+
+    client = RollbackFailClient()
+    with pytest.raises(ReloadError, match="metadata rollback failed"):
+        reload_document(client, "dataset-1", source_dir, state_path, doc_id,
+                        recrawl=lambda *_: {
+                            "doc_id": doc_id, "canonical_url": canonical,
+                            "content_path": str(new_content), "metadata_path": str(staged_meta),
+                            "metadata": {"title": "Fresh"},
+                            "provenance": {"correlation_id": "corr-2"},
+                        })
+    marker = source_dir / ".reload-backups" / "corr-2" / "manual_recovery.json"
+    assert json.loads(marker.read_text(encoding="utf-8"))["status"] == "manual_recovery"
