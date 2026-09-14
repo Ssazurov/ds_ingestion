@@ -1,13 +1,14 @@
 """Reload одной статьи из существующего локального источника (issue #8,
 ADR-0007): re-classify -> diff со старой записью GAR -> update-in-place по
-gar_document_id.
+gar_document_id (metadata PATCH + content PUT, issue #11).
 
-ИЗВЕСТНОЕ ОГРАНИЧЕНИЕ: gar-core-api сейчас не даёт заменить бинарный
-контент документа по существующему document_id -- PATCH меняет только
-metadata, POST создаёт новую версию через supersedes_document_id (другой
-id). Поэтому reload обновляет только метаданные существующей записи;
-замена "битого" контента (см. ADR-0007 п.3) требует доработки gar-core-api
-(PUT/replace content) -- заведено отдельным блокером, см. CURRENT_STATUS.md.
+gar-core-api PR #317 добавил PUT /ingestion/documents/{document_id}/content
+(update-in-place, id сохраняется). reload_document теперь всегда вызывает
+update_document_content() после успешного PATCH метаданных (полный
+re-index Docling/chunker/Qdrant локального content_path) -- reload есть
+намеренное ручное действие "перезалить статью", условный skip по хешу не
+нужен и не добавлен: GAR-схема не хранит content_hash (GAR -- источник
+истины метаданных, заводить новое поле только под этот диф избыточно).
 
 Re-crawl исходника (ds_search#141) тоже пока не реализован: reload читает
 текущий локальный sidecar-json как есть.
@@ -35,6 +36,7 @@ class ReloadReport:
     gar_document_id: str
     changed_fields: dict
     preserved_fields: list[str]
+    content_replaced: bool
 
 
 def reload_document(
@@ -79,5 +81,18 @@ def reload_document(
         # state не трогаем при сбое -- старая версия в GAR остаётся источником правды.
         raise ReloadError(f"update failed for {gar_document_id}: {exc}") from exc
 
-    logger.info("reload %s -> %s: changed=%s preserved=%s", doc_id, gar_document_id, list(changed), preserved)
-    return ReloadReport(doc_id=doc_id, gar_document_id=gar_document_id, changed_fields=changed, preserved_fields=preserved)
+    content_path = Path(meta["content_path"])
+    try:
+        client.update_document_content(gar_document_id, content_path)
+    except GarClientError as exc:
+        # metadata уже обновлена -- контент не тронут, старый текст/индекс остаются.
+        raise ReloadError(f"content replace failed for {gar_document_id}: {exc}") from exc
+
+    logger.info(
+        "reload %s -> %s: changed=%s preserved=%s content_replaced=True",
+        doc_id, gar_document_id, list(changed), preserved,
+    )
+    return ReloadReport(
+        doc_id=doc_id, gar_document_id=gar_document_id,
+        changed_fields=changed, preserved_fields=preserved, content_replaced=True,
+    )
