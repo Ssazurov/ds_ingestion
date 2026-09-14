@@ -98,7 +98,12 @@ class GarClient:
                 "doc_name": doc_name,
                 "metadata": json.dumps(metadata, ensure_ascii=False),
             }
-            resp = self._client.post("/ingestion/documents", data=data, files=files)
+            try:
+                resp = self._client.post("/ingestion/documents", data=data, files=files)
+            except httpx.RequestError as exc:
+                raise GarClientError(
+                    f"ingest {file_path.name} request failed: {exc}"
+                ) from exc
         if resp.status_code != 200:
             raise GarClientError(f"ingest {file_path.name} failed: {resp.status_code} {resp.text}")
         return resp.json()

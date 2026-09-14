@@ -51,7 +51,6 @@ def _build_select_mapping(client: GarClient, dataset_id: str) -> dict[str, dict[
     регистре из sidecar-json матчились с опциями GAR.
     """
     fields = client.list_metadata_fields(dataset_id)
-    print(f"DEBUG select_mapping field keys: {list(fields.keys())}", flush=True)
     mapping: dict[str, dict[str, str]] = {}
     for key, field in fields.items():
         if field.get("value_type") != "select":
@@ -67,9 +66,12 @@ def _build_select_mapping(client: GarClient, dataset_id: str) -> dict[str, dict[
             if label:
                 field_mapping[_normalize_key(label)] = value
         mapping[key] = field_mapping
+        if key == "direction":
+            print(f"DEBUG direction field options count: {len(field.get('options', []))}", flush=True)
+            print(f"DEBUG direction field options: {[o.get('value') for o in field.get('options', [])]}", flush=True)
     print(f"DEBUG select_mapping keys: {list(mapping.keys())}", flush=True)
     for k, v in mapping.items():
-        print(f"DEBUG {k}: {list(v.keys())[:5]}...", flush=True)
+        print(f"DEBUG {k}: {list(v.keys())}", flush=True)
     return mapping
 
 
@@ -134,6 +136,7 @@ def run_adapter(
         if doc_id in done:
             report.skipped.append({"doc_id": doc_id, "reason": "already_ingested"})
             continue
+        print(f"DEBUG processing {doc_id}", flush=True)
         meta = json.loads(json_path.read_text(encoding="utf-8"))
         if meta.get("license") in _SKIP_LICENSE_STATUSES:
             report.skipped.append({"doc_id": doc_id, "reason": f"license={meta.get('license')}"})
@@ -156,6 +159,7 @@ def run_adapter(
         if dry_run:
             report.ingested.append({"doc_id": doc_id, "dry_run": True, "metadata": payload})
             continue
+        print(f"DEBUG ingest {doc_id} payload: {payload}", flush=True)
         try:
             result = client.ingest_document(
                 dataset_id=dataset_id, file_path=content_path,
