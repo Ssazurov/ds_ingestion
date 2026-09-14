@@ -19,6 +19,19 @@
 - Тесты: `tests/test_reload.py` — 6/6 passed.
 - PR: Ssazurov/ds_ingestion#12, Closes #11.
 
+## #13 — POST /reload_by_gar_id (кнопка в админке ds_search, 2026-09-14)
+- ds_site#23 закрыт как "не по адресу": ADR-0005 закрепил, что админка живёт
+  только в `ds_search/ui/` (Streamlit). Задача перенесена в
+  Ssazurov/ds_search#145 (parent: этот эпик #7).
+- `resolve_source_doc(data_dir, gar_document_id)` в `reload.py` — обратный
+  поиск (source, doc_id) по `*.ingested.json`, т.к. кнопка в админке знает
+  только `gar_document_id`.
+- `POST /reload_by_gar_id {gar_document_id}` в `api.py` — резолвит через
+  `resolve_source_doc`, дальше обычный `reload_document`.
+- Auth не реализован — прода нет (ADR-0007 п.4).
+- Тесты: 6/6 passed (py_compile + pytest -k reload).
+- PR: Ssazurov/ds_ingestion#14 (squash), Closes #13.
+
 ## 2026-09-14 -- Epic #7: Full source reload pipeline (root ADR-0007)
 
 - Root ADR: `ds/docs/adr/0007-full-source-reload-pipeline.md` (update-in-place
