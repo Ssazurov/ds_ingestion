@@ -1,3 +1,18 @@
+## 2026-09-14 -- ADR-0009: staged recrawl orchestration реализован
+
+- Root ADR: `ds/docs/adr/0009-real-source-recrawl-reload.md`.
+- Requirements: `ds/docs/requirements/real-source-recrawl-reload.md`.
+- `reload_document` принимает staged crawler callback, проверяет canonical URL,
+  стабильный `doc_id`, metadata/content paths до GAR update, сохраняет manual
+  metadata и игнорирует `null`; PATCH выполняется до PUT, при ошибке PUT делается
+  rollback metadata snapshot, lock действует per GAR document.
+- API сохраняет `/reload` и `/reload_by_gar_id`, очищает staging и маппит
+  validation/upstream/conflict ошибки в 422/502/409; legacy state резолвится по
+  metadata.
+- Проверки: `tests/test_reload.py tests/test_auth.py` — 13 passed; `py_compile`;
+  `git diff --check`. Остались отдельные live smoke и backup/manual_recovery
+  acceptance-сценарии.
+
 ## 2026-09-14 -- issue #11: PUT content в reload_document (снят блокер #8)
 
 - gar-core-api PR #317 добавил `PUT /ingestion/documents/{document_id}/content`
@@ -107,3 +122,13 @@
 - Тесты: `tests/test_auth.py` (401 без/с неверным ключом, 429 при повторе,
   fail-fast в prod без ключа) -- 4 passed. Полный прогон: 15 passed.
 - Разблокирует прод-выкатку issue #8 (см. ADR-0007 п.4).
+## 2026-09-14 -- legacy state reload resolution
+
+- `POST /reload_by_gar_id` теперь умеет находить локальный sidecar для старых
+  `*.ingested.json` в list-формате без `gar_document_id`: сначала по
+  `source_url`/`canonical_url`, затем по уникальному `title` из текущей записи
+  GAR.
+- Причина фикса: документ `c844974c-f437-4f1a-98d7-03293b202a99` существовал в
+  GAR и локальном raw, но его legacy state содержал только `doc_id`, из-за чего
+  кнопка возвращала 404.
+- Тесты: добавлен тест URL-resolver.
