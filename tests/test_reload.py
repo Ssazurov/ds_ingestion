@@ -6,7 +6,12 @@ import json
 
 import pytest
 
-from src.adapter.reload import ReloadError, reload_document
+from src.adapter.reload import (
+    ReloadError,
+    ReloadValidationError,
+    reload_document,
+    resolve_source_doc_from_metadata,
+)
 
 
 class FakeClient:
@@ -16,6 +21,7 @@ class FakeClient:
         self.fail_content = fail_content
         self.updated_with: dict | None = None
         self.content_path = None
+        self.calls = []
 
     def list_metadata_fields(self, dataset_id):
         return {}
@@ -28,6 +34,7 @@ class FakeClient:
             from src.gar_client.client import GarClientError
             raise GarClientError("boom")
         self.updated_with = metadata
+        self.calls.append(("metadata", metadata))
         return {"document_id": document_id}
 
     def update_document_content(self, document_id, file_path):
@@ -35,6 +42,7 @@ class FakeClient:
             from src.gar_client.client import GarClientError
             raise GarClientError("boom-content")
         self.content_path = file_path
+        self.calls.append(("content", file_path))
         return {"document_id": document_id}
 
 
@@ -106,3 +114,62 @@ def test_reload_update_failure_does_not_raise_reloaderror_wraps_client_error(tmp
     client = FakeClient(existing_metadata={}, fail_update=True)
     with pytest.raises(ReloadError, match="update failed"):
         reload_document(client, "dataset-1", source_dir, state_path, "doc1")
+
+
+def test_resolve_source_doc_from_metadata_matches_source_url(tmp_path):
+    raw_dir = tmp_path / "raw" / "family_support"
+    raw_dir.mkdir(parents=True)
+    (raw_dir / "doc1.json").write_text(
+        json.dumps({"source_url": "https://example.test/doc", "title": "Title"}),
+        encoding="utf-8",
+    )
+
+    assert resolve_source_doc_from_metadata(
+        tmp_path / "raw", {"source_url": "https://example.test/doc"}
+    ) == ("family_support", "doc1")
+
+
+def test_recrawl_preserves_manual_fields_and_ignores_null(tmp_path):
+    import hashlib
+
+    canonical = "https://example.test/doc"
+    doc_id = hashlib.sha256(canonical.encode()).hexdigest()[:16]
+    source_dir = _write_source(tmp_path, doc_id, {
+        "source_url": canonical, "title": "Old", "reviewed_by": "editor",
+    })
+    state_path = _write_state(tmp_path, {doc_id: "gar-1"})
+    staged = tmp_path / "staged"
+    staged.mkdir()
+    content = staged / f"{doc_id}.md"
+    content.write_text("fresh", encoding="utf-8")
+    metadata = staged / f"{doc_id}.json"
+    metadata.write_text("{}", encoding="utf-8")
+    client = FakeClient(existing_metadata={"title": "Old", "reviewed_by": "editor", "note": "keep"})
+    report = reload_document(
+        client, "dataset-1", source_dir, state_path, doc_id,
+        recrawl=lambda _url, _doc_id: {
+                "doc_id": doc_id,
+            "canonical_url": canonical, "content_path": str(content),
+            "metadata_path": str(metadata), "metadata": {"title": "Fresh", "note": None},
+        },
+    )
+    assert report.preserved_fields == ["reviewed_by", "note"]
+    assert client.updated_with["note"] == "keep"
+    assert client.updated_with["title"] == "Fresh"
+    assert [call[0] for call in client.calls] == ["metadata", "content"]
+
+
+def test_recrawl_rejects_unstable_doc_id_without_gar_update(tmp_path):
+    source_dir = _write_source(tmp_path, "doc1", {"source_url": "https://example.test/doc"})
+    state_path = _write_state(tmp_path, {"doc1": "gar-1"})
+    client = FakeClient(existing_metadata={})
+    with pytest.raises(ReloadValidationError):
+        reload_document(
+            client, "dataset-1", source_dir, state_path, "doc1",
+            recrawl=lambda _url, _doc_id: {
+                "doc_id": "wrong", "canonical_url": "https://example.test/doc",
+                "content_path": str(tmp_path / "missing.md"),
+                "metadata_path": str(tmp_path / "missing.json"), "metadata": {},
+            },
+        )
+    assert client.updated_with is None

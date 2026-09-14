@@ -8,14 +8,23 @@ Auth: X-Ingestion-Key + rate-limit per doc_id, см. ADR-0008.
 from __future__ import annotations
 
 from pathlib import Path
+import json
+import shutil
+import subprocess
+import tempfile
 
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel
 
-from ..gar_client.client import GarClient
+from ..gar_client.client import GarClient, GarClientError
 from ..gar_client.config import load_settings
 from .auth import check_auth, check_rate_limit
-from .reload import ReloadError, reload_document, resolve_source_doc
+from .reload import (
+    ReloadError,
+    reload_document,
+    resolve_source_doc,
+    resolve_source_doc_from_metadata,
+)
 
 app = FastAPI(title="ds_ingestion")
 
@@ -32,18 +41,45 @@ class ReloadByGarIdRequest(BaseModel):
     gar_document_id: str
 
 
-def _do_reload(settings, source: str, doc_id: str) -> dict:
+def _do_reload(settings, source: str, doc_id: str, known_gar_document_id: str | None = None) -> dict:
     source_dir = Path(settings.ds_search_root).resolve() / "data" / "raw" / source
     state_path = Path(__file__).resolve().parents[2] / "data" / f"{source}.ingested.json"
     if not source_dir.is_dir():
         raise HTTPException(404, f"source not found: {source}")
 
+    staging_dir: str | None = None
+
+    def recrawl(url: str, expected_doc_id: str):
+        nonlocal staging_dir
+        staging = tempfile.mkdtemp(prefix=f"reload-{expected_doc_id}-")
+        staging_dir = staging
+        proc = subprocess.run(
+            ["python", "-m", "src.crawler.crawler", "--recrawl", "--source", source,
+             "--doc-id", expected_doc_id, "--url", url, "--staging-dir", staging],
+            cwd=settings.ds_search_root, capture_output=True, text=True, timeout=600,
+        )
+        if proc.returncode:
+            return None
+        lines = [line for line in proc.stdout.splitlines() if line.strip()]
+        try:
+            result = json.loads(lines[-1])
+        except (IndexError, json.JSONDecodeError):
+            return None
+        result["_staging_dir"] = staging
+        return result
+
     with GarClient(settings) as client:
         dataset_id = client.ensure_dataset(settings.dataset_name)
         try:
-            report = reload_document(client, dataset_id, source_dir, state_path, doc_id)
+            report = reload_document(
+                client, dataset_id, source_dir, state_path, doc_id, known_gar_document_id,
+                recrawl=recrawl,
+            )
         except ReloadError as exc:
-            raise HTTPException(404, str(exc)) from exc
+            raise HTTPException(exc.status_code, str(exc)) from exc
+        finally:
+            if staging_dir:
+                shutil.rmtree(staging_dir, ignore_errors=True)
 
     return {
         "doc_id": report.doc_id,
@@ -70,6 +106,16 @@ def reload_by_gar_id_endpoint(body: ReloadByGarIdRequest) -> dict:
     data_dir = Path(__file__).resolve().parents[2] / "data"
     try:
         source, doc_id = resolve_source_doc(data_dir, body.gar_document_id)
-    except ReloadError as exc:
-        raise HTTPException(404, str(exc)) from exc
-    return _do_reload(settings, source, doc_id)
+    except ReloadError:
+        # Legacy state files have no GAR IDs. Resolve through the document's
+        # stable source_url/title, then normal reload validates local state.
+        try:
+            with GarClient(settings) as client:
+                existing = client.get_document(body.gar_document_id)
+            source, doc_id = resolve_source_doc_from_metadata(
+                Path(settings.ds_search_root).resolve() / "data" / "raw",
+                existing.get("metadata") or {},
+            )
+        except (GarClientError, ReloadError) as exc:
+            raise HTTPException(404, str(exc)) from exc
+    return _do_reload(settings, source, doc_id, body.gar_document_id)
