@@ -13,6 +13,20 @@
   `git diff --check`. Остались отдельные live smoke и backup/manual_recovery
   acceptance-сценарии.
 
+## 2026-09-14 -- backup/manual_recovery acceptance slice
+
+- При staged reload перед GAR PATCH сохраняется backup исходных sidecar/content
+  в `<source>/.reload-backups/<correlation_id>/`.
+- Если PUT content и последующий metadata rollback неуспешны, backup получает
+  `manual_recovery.json` с GAR ID, ошибкой и путём восстановления; state не меняется.
+- Добавлены тесты backup preservation и manual-recovery marker.
+- Live smoke: GAR `/health` — `200`, staged recrawl реального URL
+  `alisa-i-chudesa` — exit `0`, стабильный `doc_id=957d4192c8455c1d`, staged
+  `.md`/`.json` созданы. Полный API reload не выполнен: текущий `ds_search`
+  crawler config содержит только source key `downsideup`, а локальный документ
+  находится в `family_support`; это отдельный integration blocker.
+- Проверки: focused `pytest` — 15 passed; `py_compile`; `git diff --check`.
+
 ## 2026-09-14 -- issue #11: PUT content в reload_document (снят блокер #8)
 
 - gar-core-api PR #317 добавил `PUT /ingestion/documents/{document_id}/content`
