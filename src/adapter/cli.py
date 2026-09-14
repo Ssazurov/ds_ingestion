@@ -25,6 +25,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     settings = load_settings()
+    print(f"DEBUG settings: user_id={settings.user_id}, tenant_id={settings.tenant_id}, dataset_name={settings.dataset_name}", flush=True)
     source_dir = Path(settings.ds_search_root).resolve() / "data" / "raw" / args.source
     if not source_dir.is_dir():
         parser.error(f"источник не найден: {source_dir}")
