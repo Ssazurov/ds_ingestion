@@ -65,7 +65,7 @@ def _load_domain_schema(ds_search_root: str):
     categories = sorted({c for cats in module.load_categories().values() for c in cats})
     return (
         module.DIRECTIONS, module.DOC_TYPES, module.TARGET_AUDIENCES,
-        module.LICENSE_STATUSES, categories,
+        module.LICENSE_STATUSES, categories, profile_module.LIFECYCLE_STAGES,
     )
 
 
@@ -80,12 +80,20 @@ _TEXT_FIELDS = [
     ("description", "Description", False),
     ("keywords", "Keywords", False),
     ("age_group", "Age group", False),
+    # issue #2, ADR-0002 "Требования к ingestion: обязательные поля метаданных".
+    # date_indexed/comorbidity_tags/reviewed_by — text, опциональны (пустое
+    # значение допустимо); lifecycle_stage — select, регистрируется ниже.
+    ("date_indexed", "Date indexed", False),
+    ("comorbidity_tags", "Comorbidity tags", False),
+    ("reviewed_by", "Reviewed by", False),
 ]
 
 
 def ensure_domain_schema(client: GarClient, dataset_id: str, ds_search_root: str) -> None:
     """Идемпотентно заводит доменный профиль метаданных на датасете."""
-    directions, doc_types, audiences, licenses, categories = _load_domain_schema(ds_search_root)
+    directions, doc_types, audiences, licenses, categories, lifecycle_stages = (
+        _load_domain_schema(ds_search_root)
+    )
     for key, label, required in _TEXT_FIELDS:
         client.ensure_metadata_field(dataset_id, key, label, "text", required)
     select_fields = [
@@ -94,6 +102,7 @@ def ensure_domain_schema(client: GarClient, dataset_id: str, ds_search_root: str
         ("doc_type", "Doc type", doc_types, False),
         ("target_audience", "Target audience", audiences, False),
         ("license", "License", licenses, True),
+        ("lifecycle_stage", "Lifecycle stage", lifecycle_stages, False),
     ]
     for key, label, options, required in select_fields:
         client.ensure_metadata_field(dataset_id, key, label, "select", required, options)

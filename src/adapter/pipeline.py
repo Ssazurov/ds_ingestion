@@ -28,6 +28,10 @@ _METADATA_KEYS = (
     "source_url", "source_domain", "title", "direction", "license",
     "attribution", "category", "doc_type", "target_audience", "author",
     "publish_date", "description", "keywords", "age",
+    # issue #2, ADR-0002: обязательные для end-to-end ingestion поля.
+    # comorbidity_tags/reviewed_by опциональны — пустая строка допустима,
+    # поэтому не исключаются `meta.get(k) is not None` ниже, если явно "".
+    "date_indexed", "lifecycle_stage", "comorbidity_tags", "reviewed_by",
 )
 # "age_group" -- устаревший текстовый ключ, неактивен в текущем словаре
 # metadata-fields sindrom-dauna (см. GET /datasets/.../metadata-fields);
@@ -36,7 +40,9 @@ _METADATA_KEYS = (
 
 # Select-поля, которые нужно нормализовать под актуальные опции GAR
 # (значения в sidecar-json могут быть русскими label, а backend ожидает value).
-_NORMALIZE_SELECT_KEYS = ("direction", "category", "doc_type", "target_audience", "license")
+_NORMALIZE_SELECT_KEYS = (
+    "direction", "category", "doc_type", "target_audience", "license", "lifecycle_stage",
+)
 
 
 def _normalize_key(value: object) -> str:
