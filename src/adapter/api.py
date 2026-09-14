@@ -43,4 +43,5 @@ def reload_endpoint(body: ReloadRequest) -> dict:
         "gar_document_id": report.gar_document_id,
         "changed_fields": report.changed_fields,
         "preserved_fields": report.preserved_fields,
+        "content_replaced": report.content_replaced,
     }

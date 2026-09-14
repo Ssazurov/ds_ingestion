@@ -116,9 +116,24 @@ class GarClient:
         return resp.json()
 
     def update_document_metadata(self, document_id: str, metadata: dict) -> dict:
-        """issue #8, ADR-0007: update-in-place по gar_document_id (PATCH метаданных,
-        content не заменяется -- gar-core-api не даёт PUT контента, см. reload.py)."""
+        """issue #8, ADR-0007: update-in-place по gar_document_id (PATCH метаданных).
+        Для замены контента см. update_document_content()."""
         resp = self._client.patch(f"/ingestion/documents/{document_id}", json={"metadata": metadata})
         if resp.status_code != 200:
             raise GarClientError(f"update document {document_id} failed: {resp.status_code} {resp.text}")
+        return resp.json()
+
+    def update_document_content(self, document_id: str, file_path: Path) -> dict:
+        """issue #11, ADR-0007 п.1: PUT /ingestion/documents/{document_id}/content --
+        update-in-place замена файла (Docling/chunker/Qdrant reindex),
+        document_id/doc_name/product/doc_type/version берутся gar-core-api
+        из самой записи и не меняются."""
+        with file_path.open("rb") as fh:
+            files = {"file": (file_path.name, fh)}
+            try:
+                resp = self._client.put(f"/ingestion/documents/{document_id}/content", files=files)
+            except httpx.RequestError as exc:
+                raise GarClientError(f"replace content {document_id} request failed: {exc}") from exc
+        if resp.status_code != 200:
+            raise GarClientError(f"replace content {document_id} failed: {resp.status_code} {resp.text}")
         return resp.json()
