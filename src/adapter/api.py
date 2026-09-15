@@ -11,6 +11,7 @@ from pathlib import Path
 import json
 import shutil
 import subprocess
+import sys
 import tempfile
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -54,7 +55,7 @@ def _do_reload(settings, source: str, doc_id: str, known_gar_document_id: str | 
         staging = tempfile.mkdtemp(prefix=f"reload-{expected_doc_id}-")
         staging_dir = staging
         proc = subprocess.run(
-            ["python", "-m", "src.crawler.crawler", "--recrawl", "--source", source,
+            [sys.executable, "-m", "src.crawler.crawler", "--recrawl", "--source", source,
              "--doc-id", expected_doc_id, "--url", url, "--staging-dir", staging],
             cwd=settings.ds_search_root, capture_output=True, text=True, timeout=600,
         )
