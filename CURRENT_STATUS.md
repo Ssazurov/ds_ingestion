@@ -1,3 +1,34 @@
+## 2026-09-15 -- fix: identity recrawl по canonical_url, не doc_id (PR #27, Closes #26)
+
+- ADR-0010 (`ds/docs/adr/0010-recrawl-identity-canonical-url.md`, амендмент
+  ADR-0009 п.2): `doc_id` — локальный ключ state/файлов, не identity.
+  Identity recrawl'а — `canonical_url`.
+- `reload_document`: убрана проверка `staged_id != doc_id`; добавлена
+  проверка `canonical_url` (staged) == `canonical_url` старой записи.
+  `staged_id == sha256(canonical_url)[:16]` (внутренняя консистентность
+  staged-результата) осталась без изменений.
+- Legacy slug `doc_id` (`papa-solnechnogo-rebenka-...`) больше не блокирует
+  reload; concретный doc `0ff5048e-2c5c-450f-b619-90d6449d8ca6` разблокирован.
+- Тесты: +2 (`test_recrawl_allows_legacy_slug_doc_id`,
+  `test_recrawl_rejects_canonical_url_drift`), 13/13 passed.
+
+## 2026-09-15 -- fix: recrawl subprocess venv (PR #25, Closes #24) + найден identity-баг (#26)
+
+- Воспроизведён 404 для reload gar_document_id `0ff5048e-2c5c-450f-b619-90d6449d8ca6`
+  (`papa-solnechnogo-...`). По цепочке найдено два разных бага:
+  1. `sys.executable` в `recrawl()` — это интерпретатор **ds_ingestion**, у
+     него нет `crawl4ai`/зависимостей краулера -> subprocess падает
+     `ModuleNotFoundError`, `_do_reload` тихо отдаёт 502 "re-crawl rejected".
+     Исправлено: берём `python` из `<ds_search_root>/.venv/bin/python`
+     (fallback `sys.executable`). PR #25 (merged), Closes #24.
+  2. После фикса (1) вскрылся системный баг: `reload_document`
+     (ADR-0009 п.2) требует `staged_id(sha256 canonical_url) == doc_id`,
+     но legacy-документы имеют slug `doc_id` (не hash) -> 422 "invalid
+     staged identity or metadata" **для всех** таких документов, не
+     только для этого. Не чинил вслепую — меняет identity-контракт
+     ADR-0009, нужен ADR. Заведён issue #26.
+- Итог: конкретный doc из запроса пока НЕ перезагружается (падает на #26).
+
 ## 2026-09-15 -- fix: reload FileNotFoundError (python vs python3)
 
 - Баг: `recrawl()` в `src/adapter/api.py` запускал краулер через
