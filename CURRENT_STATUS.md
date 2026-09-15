@@ -1,3 +1,17 @@
+## 2026-09-15 -- fix: reload FileNotFoundError (python vs python3)
+
+- Баг: `recrawl()` в `src/adapter/api.py` запускал краулер через
+  `subprocess.run(["python", ...])`, в окружении нет `python`, только
+  `python3` -> `FileNotFoundError` -> кнопка reload в ds_search/ui падала
+  404/500. Исправлено на `sys.executable` (PR #23, Closes #21).
+- Найден отдельный баг (не исправлен, issue #22): fallback-резолв
+  `resolve_source_doc_from_metadata` для legacy-документов без записи в
+  `.ingested.json` возвращает raw-категорию (`family_support`) вместо
+  реального ключа `SOURCES` из `ds_search/src/crawler/config.py`
+  (`downsideup`). Краулер падает `KeyError`, `_do_reload` тихо превращает
+  это в "re-crawl rejected" (502). Воспроизведено на
+  gar_document_id=c844974c-f437-4f1a-98d7-03293b202a99.
+
 ## 2026-09-14 -- ADR-0009: staged recrawl orchestration реализован
 
 - Root ADR: `ds/docs/adr/0009-real-source-recrawl-reload.md`.
