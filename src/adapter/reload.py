@@ -183,9 +183,16 @@ def reload_document(
             canonical_url = staged.get("canonical_url")
             staged_id = staged.get("doc_id")
             metadata_path = Path(staged.get("metadata_path") or "")
+            old_canonical_url = meta.get("canonical_url") or meta.get("source_url")
+            # ADR-0010 (амендмент ADR-0009 п.2): identity recrawl'а -- canonical_url,
+            # не doc_id. Legacy doc_id -- slug, не sha256(canonical_url); staged_id
+            # сверяется только с собственным canonical_url (внутренняя консистентность
+            # staged-результата), а стабильность источника -- через canonical_url
+            # старой записи, не через doc_id.
             if (not canonical_url or not staged_id or
                     staged_id != hashlib.sha256(canonical_url.encode()).hexdigest()[:16] or
-                    staged_id != doc_id or not metadata_path.is_file()):
+                    not old_canonical_url or canonical_url != old_canonical_url or
+                    not metadata_path.is_file()):
                 raise ReloadValidationError("invalid staged identity or metadata")
             staged_meta = staged.get("metadata") or {}
             content_path = Path(staged.get("content_path") or "")
