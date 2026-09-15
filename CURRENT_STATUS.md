@@ -1,3 +1,7 @@
+## 2026-09-15 -- release 0.1.21 closed; next 0.1.22
+
+- All Project #1 items targeted to 0.1.21 are Done/closed. Release notes published; next release target is 0.1.22.
+
 ## 2026-09-15 -- verify: reload 0ff5048e (Папа солнечного ребёнка) успешен
 
 - Сервис `src.adapter.api` перезапущен (подхватить фикс #26), вызван штатный
