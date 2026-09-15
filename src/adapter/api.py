@@ -54,8 +54,14 @@ def _do_reload(settings, source: str, doc_id: str, known_gar_document_id: str | 
         nonlocal staging_dir
         staging = tempfile.mkdtemp(prefix=f"reload-{expected_doc_id}-")
         staging_dir = staging
+        # ds_ingestion#24: sys.executable — интерпретатор ds_ingestion, у него
+        # нет зависимостей краулера (crawl4ai и т.п.). Нужен python из venv
+        # ds_search, а не из своего собственного.
+        ds_search_root = Path(settings.ds_search_root).resolve()
+        ds_search_python = ds_search_root / ".venv" / "bin" / "python"
+        python_bin = str(ds_search_python) if ds_search_python.is_file() else sys.executable
         proc = subprocess.run(
-            [sys.executable, "-m", "src.crawler.crawler", "--recrawl", "--source", source,
+            [python_bin, "-m", "src.crawler.crawler", "--recrawl", "--source", source,
              "--doc-id", expected_doc_id, "--url", url, "--staging-dir", staging],
             cwd=settings.ds_search_root, capture_output=True, text=True, timeout=600,
         )
