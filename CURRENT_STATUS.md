@@ -1,3 +1,12 @@
+## 2026-09-15 -- verify: reload 0ff5048e (Папа солнечного ребёнка) успешен
+
+- Сервис `src.adapter.api` перезапущен (подхватить фикс #26), вызван штатный
+  `POST /reload_by_gar_id` для `0ff5048e-2c5c-450f-b619-90d6449d8ca6` —
+  200, `content_replaced=true`. Legacy slug `doc_id` подтверждён рабочим.
+- `«Мам, я хочу как Саид»` (`c844974c-f437-4f1a-98d7-03293b202a99`) — тот же
+  класс проблемы, не перезагружен в этой сессии, кандидат на повтор той же
+  проверки при необходимости.
+
 ## 2026-09-15 -- fix: identity recrawl по canonical_url, не doc_id (PR #27, Closes #26)
 
 - ADR-0010 (`ds/docs/adr/0010-recrawl-identity-canonical-url.md`, амендмент
