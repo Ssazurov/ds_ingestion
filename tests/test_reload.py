@@ -175,6 +175,55 @@ def test_recrawl_rejects_unstable_doc_id_without_gar_update(tmp_path):
     assert client.updated_with is None
 
 
+def test_recrawl_allows_legacy_slug_doc_id(tmp_path):
+    """ADR-0010 (амендмент ADR-0009 п.2, issue #26): identity -- canonical_url,
+    не doc_id. Legacy doc_id -- slug, не sha256(canonical_url), и это ок."""
+    canonical = "https://example.test/papa-solnechnogo-rebenka"
+    doc_id = "papa-solnechnogo-rebenka-o-sebe-o-syne"
+    source_dir = _write_source(tmp_path, doc_id, {"source_url": canonical, "title": "Old"})
+    state_path = _write_state(tmp_path, {doc_id: "gar-1"})
+    staged = tmp_path / "staged"
+    staged.mkdir()
+    content = staged / f"{doc_id}.md"
+    content.write_text("fresh", encoding="utf-8")
+    metadata = staged / f"{doc_id}.json"
+    metadata.write_text("{}", encoding="utf-8")
+    staged_id = __import__("hashlib").sha256(canonical.encode()).hexdigest()[:16]
+    client = FakeClient(existing_metadata={"title": "Old"})
+
+    report = reload_document(
+        client, "dataset-1", source_dir, state_path, doc_id,
+        recrawl=lambda _url, _doc_id: {
+            "doc_id": staged_id, "canonical_url": canonical,
+            "content_path": str(content), "metadata_path": str(metadata),
+            "metadata": {"title": "Fresh"},
+        },
+    )
+    assert report.gar_document_id == "gar-1"
+    assert client.updated_with["title"] == "Fresh"
+
+
+def test_recrawl_rejects_canonical_url_drift(tmp_path):
+    """Стабильность источника проверяется по canonical_url, не по doc_id."""
+    old_canonical = "https://example.test/old-page"
+    new_canonical = "https://example.test/new-page"
+    doc_id = "some-slug"
+    source_dir = _write_source(tmp_path, doc_id, {"source_url": old_canonical, "title": "Old"})
+    state_path = _write_state(tmp_path, {doc_id: "gar-1"})
+    staged_id = __import__("hashlib").sha256(new_canonical.encode()).hexdigest()[:16]
+    client = FakeClient(existing_metadata={})
+    with pytest.raises(ReloadValidationError):
+        reload_document(
+            client, "dataset-1", source_dir, state_path, doc_id,
+            recrawl=lambda _url, _doc_id: {
+                "doc_id": staged_id, "canonical_url": new_canonical,
+                "content_path": str(tmp_path / "missing.md"),
+                "metadata_path": str(tmp_path / "missing.json"), "metadata": {},
+            },
+        )
+    assert client.updated_with is None
+
+
 def test_recrawl_keeps_backup_when_content_replace_fails(tmp_path):
     import hashlib
 
