@@ -101,6 +101,32 @@ def _normalize_payload(payload: dict, mapping: dict[str, dict[str, str]]) -> dic
     return result
 
 
+_WORDS_PER_MIN = 200  # ds_site/lib/format.ts WORDS_PER_MIN, issue #33
+_READING_TIME_DOC_TYPES = {"article"}  # news не считаем
+_WORD_RE = re.compile(r"\w+", re.UNICODE)
+
+
+def compute_reading_time_min(content_path: Path) -> int | None:
+    """ceil(слов / 200) по каноническому тексту (.md); None для не-текстовых форматов."""
+    if content_path.suffix.lower() != ".md":
+        return None
+    try:
+        text = content_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    words = len(_WORD_RE.findall(text))
+    return max(1, -(-words // _WORDS_PER_MIN)) if words else None
+
+
+def add_reading_time(payload: dict, content_path: Path) -> dict:
+    """Для doc_type=article добавляет reading_time_min (text-поле GAR, ADR-0017)."""
+    if payload.get("doc_type") in _READING_TIME_DOC_TYPES:
+        minutes = compute_reading_time_min(content_path)
+        if minutes is not None:
+            payload["reading_time_min"] = str(minutes)
+    return payload
+
+
 @dataclass
 class IngestReport:
     ingested: list[dict] = field(default_factory=list)
@@ -168,6 +194,7 @@ def run_adapter(
             {k: meta.get(k) for k in _METADATA_KEYS if meta.get(k) is not None},
             select_mapping,
         )
+        add_reading_time(payload, content_path)
         if doc_id == "prosto-zhit-i-lyubit":
             print(f"DEBUG payload for {doc_id}: {payload}", flush=True)
         if dry_run:
