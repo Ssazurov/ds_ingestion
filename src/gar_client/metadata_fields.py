@@ -86,6 +86,8 @@ _TEXT_FIELDS = [
     ("date_indexed", "Date indexed", False),
     ("comorbidity_tags", "Comorbidity tags", False),
     ("reviewed_by", "Reviewed by", False),
+    # issue #33, ADR-0017: минуты чтения для doc_type=article (число строкой).
+    ("reading_time_min", "Reading time (min)", False),
 ]
 
 

@@ -337,3 +337,6 @@
   `licenses.yaml`, не кода.
 
 - 2026-09-19: ADR-0015 (root `ds/docs/adr/0015-document-tags-field.md`): поле `tags` в метаданных; issue ds_site#61 (родитель), дочерние в gar-core-api и ds_ingestion.
+
+## 2026-09-20 — issue #33: reading_time_min
+- `add_reading_time` (pipeline.py) для doc_type=article: ceil(слов/200) по .md, text-поле `reading_time_min` (metadata_fields.py); применено в run_adapter и reload (обе ветки). ADR: ds/docs/adr/0017. Тесты: tests/test_reading_time.py (25 passed). Backfill старых статей — через reload.

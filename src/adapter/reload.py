@@ -25,7 +25,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..gar_client.client import GarClient, GarClientError
-from .pipeline import _METADATA_KEYS, _build_select_mapping, _load_state, _normalize_payload
+from .pipeline import (
+    _METADATA_KEYS, _build_select_mapping, _load_state, _normalize_payload, add_reading_time,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -204,11 +206,13 @@ def reload_document(
                 {k: staged_meta.get(k) for k in _METADATA_KEYS if staged_meta.get(k) is not None},
                 select_mapping,
             )
+            add_reading_time(new_payload, content_path)
         else:
             new_payload = _normalize_payload(
                 {k: meta.get(k) for k in _METADATA_KEYS if meta.get(k) is not None},
                 select_mapping,
             )
+            add_reading_time(new_payload, Path(meta.get("content_path") or ""))
 
     # ADR-0007 п.2: поля, которых нет в новом выводе классификатора, но есть
     # в старой записи (потенциально правились вручную), переносятся as is.
