@@ -1,3 +1,9 @@
+## 2026-09-20 -- issue #35: publish_permission в метаданных (ADR-0018)
+- `metadata_fields.py`: `PUBLISH_PERMISSIONS` (not_set/not_required/granted/denied), select-поле `publish_permission` (optional) в `ensure_domain_schema`. Для существующего датасета один раз запустить bootstrap схемы.
+- `pipeline.py`: ключ в `_METADATA_KEYS`/`_NORMALIZE_SELECT_KEYS` (наследуется из sidecar-json источника); `apply_publish_permission_default` -> `not_set` только в `run_adapter` и только если поле есть в GAR. Невалидное значение -> отбрасывается -> `not_set`.
+- reload: дефолт НЕ ставится; ручной override на статье в GAR сохраняется существующим `_merge_metadata` (GAR != sidecar). Тесты: tests/test_publish_permission.py, pytest 32 passed.
+- Заполнение значения в sidecar по реестру источников — задача ds_search (Epic ds_site#91).
+
 ## 2026-09-15 -- release 0.1.21 closed; next 0.1.22
 
 - All Project #1 items targeted to 0.1.21 are Done/closed. Release notes published; next release target is 0.1.22.

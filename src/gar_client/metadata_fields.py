@@ -91,6 +91,12 @@ _TEXT_FIELDS = [
 ]
 
 
+# issue #35, ADR-0018: разрешение на публикацию во внешнем сайте. Значения
+# синхронизированы с реестром источников ds_search; отсутствие = not_set.
+PUBLISH_PERMISSIONS = ["not_set", "not_required", "granted", "denied"]
+DEFAULT_PUBLISH_PERMISSION = "not_set"
+
+
 def ensure_domain_schema(client: GarClient, dataset_id: str, ds_search_root: str) -> None:
     """Идемпотентно заводит доменный профиль метаданных на датасете."""
     directions, doc_types, audiences, licenses, categories, lifecycle_stages = (
@@ -105,6 +111,7 @@ def ensure_domain_schema(client: GarClient, dataset_id: str, ds_search_root: str
         ("target_audience", "Target audience", audiences, False),
         ("license", "License", licenses, True),
         ("lifecycle_stage", "Lifecycle stage", lifecycle_stages, False),
+        ("publish_permission", "Publish permission", PUBLISH_PERMISSIONS, False),
     ]
     for key, label, options, required in select_fields:
         client.ensure_metadata_field(dataset_id, key, label, "select", required, options)

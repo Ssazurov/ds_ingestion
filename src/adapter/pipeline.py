@@ -17,6 +17,7 @@ from pathlib import Path
 
 from .convert import UnsupportedFormatError, ensure_allowed_format
 from ..gar_client.client import GarClient, GarClientError
+from ..gar_client.metadata_fields import DEFAULT_PUBLISH_PERMISSION
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,9 @@ _METADATA_KEYS = (
     # comorbidity_tags/reviewed_by опциональны — пустая строка допустима,
     # поэтому не исключаются `meta.get(k) is not None` ниже, если явно "".
     "date_indexed", "lifecycle_stage", "comorbidity_tags", "reviewed_by",
+    # issue #35, ADR-0018: разрешение источника на публикацию (наследуется
+    # документом из sidecar; ручной override в GAR сохраняет reload).
+    "publish_permission",
 )
 # "age_group" -- устаревший текстовый ключ, неактивен в текущем словаре
 # metadata-fields sindrom-dauna (см. GET /datasets/.../metadata-fields);
@@ -42,7 +46,17 @@ _METADATA_KEYS = (
 # (значения в sidecar-json могут быть русскими label, а backend ожидает value).
 _NORMALIZE_SELECT_KEYS = (
     "direction", "category", "doc_type", "target_audience", "license", "lifecycle_stage",
+    "publish_permission",
 )
+
+
+def apply_publish_permission_default(payload: dict) -> dict:
+    """Первичная индексация: документ без (валидного) значения = not_set.
+
+    Только для run_adapter; reload дефолт НЕ ставит, иначе затёр бы ручной
+    override/значение в GAR (см. _merge_metadata)."""
+    payload.setdefault("publish_permission", DEFAULT_PUBLISH_PERMISSION)
+    return payload
 
 
 def _normalize_key(value: object) -> str:
@@ -194,6 +208,8 @@ def run_adapter(
             {k: meta.get(k) for k in _METADATA_KEYS if meta.get(k) is not None},
             select_mapping,
         )
+        if "publish_permission" in select_mapping:  # поле зарегистрировано в GAR
+            apply_publish_permission_default(payload)
         add_reading_time(payload, content_path)
         if doc_id == "prosto-zhit-i-lyubit":
             print(f"DEBUG payload for {doc_id}: {payload}", flush=True)
