@@ -141,8 +141,14 @@ def _write_manual_recovery(backup_dir: Path, document_id: str, error: Exception)
 def _local_content(meta: dict, json_path: Path) -> Path:
     """content_path в sidecar записан ds-search контейнером (/app/data/...);
     в ds-ingestion тот же файл лежит рядом с .json — берём по имени."""
-    p = Path(meta.get("content_path") or "")
-    return p if p.is_file() else json_path.parent / p.name
+    raw = meta.get("content_path")
+    if not raw:
+        raise ReloadError(f"content_path отсутствует в {json_path.name}")
+    p = Path(raw)
+    local = p if p.is_file() else json_path.parent / p.name
+    if not local.is_file():
+        raise ReloadError(f"файл контента не найден: {local}")
+    return local
 
 
 @dataclass
@@ -164,6 +170,7 @@ def reload_document(
         raise ReloadError(f"source doc not found: {json_path}")
 
     state = _load_state(state_path)
+    backfill_state = False
     if doc_id not in state:
         if not known_gar_document_id:
             raise ReloadError(f"doc_id {doc_id!r} not in state ({state_path.name}); run initial ingest first")
@@ -172,8 +179,10 @@ def reload_document(
         # ds_ingestion pipeline и не попадают в {source}.ingested.json —
         # известный gar_document_id из карточки материала достаточен,
         # state дозаполняется для последующих reload.
+        # Сохраняем только после успешного update (ниже), иначе неудачный
+        # reload оставит в state ложную привязку doc_id -> gar_id.
         state[doc_id] = known_gar_document_id
-        _save_state(state_path, state)
+        backfill_state = True
     gar_document_id = state[doc_id] or known_gar_document_id
     if not gar_document_id:
         raise ReloadError(
@@ -254,6 +263,9 @@ def reload_document(
                     _write_manual_recovery(backup_dir, gar_document_id, rollback_exc)
                 raise ReloadError(f"content replace failed; metadata rollback failed for {gar_document_id}") from exc
             raise ReloadError(f"content replace failed for {gar_document_id}: {exc}") from exc
+
+        if backfill_state:
+            _save_state(state_path, state)
 
         logger.info(
             "reload %s -> %s: changed=%s preserved=%s content_replaced=True",
