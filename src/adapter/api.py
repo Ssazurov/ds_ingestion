@@ -40,9 +40,14 @@ class ReloadByGarIdRequest(BaseModel):
     gar_document_id из карточки материала (issue ds_search#23)."""
 
     gar_document_id: str
+    # False: контент уже обновлён локально вызывающей стороной (ds_search
+    # перекачивает сам — в контейнере ds-ingestion нет краулера, ds_ingestion#40);
+    # reload берёт метаданные+контент из локальных файлов.
+    recrawl: bool = True
 
 
-def _do_reload(settings, source: str, doc_id: str, known_gar_document_id: str | None = None) -> dict:
+def _do_reload(settings, source: str, doc_id: str, known_gar_document_id: str | None = None,
+               use_recrawl: bool = True) -> dict:
     source_dir = Path(settings.ds_search_root).resolve() / "data" / "raw" / source
     state_path = Path(__file__).resolve().parents[2] / "data" / f"{source}.ingested.json"
     if not source_dir.is_dir():
@@ -80,7 +85,7 @@ def _do_reload(settings, source: str, doc_id: str, known_gar_document_id: str | 
         try:
             report = reload_document(
                 client, dataset_id, source_dir, state_path, doc_id, known_gar_document_id,
-                recrawl=recrawl,
+                recrawl=recrawl if use_recrawl else None,
             )
         except ReloadError as exc:
             raise HTTPException(exc.status_code, str(exc)) from exc
@@ -104,25 +109,37 @@ def reload_endpoint(body: ReloadRequest) -> dict:
     return _do_reload(settings, body.source, body.doc_id)
 
 
+def _resolve_by_gar_id(settings, gar_document_id: str) -> tuple[str, str]:
+    data_dir = Path(__file__).resolve().parents[2] / "data"
+    try:
+        return resolve_source_doc(data_dir, gar_document_id)
+    except ReloadError:
+        # Legacy state files have no GAR IDs. Resolve through the document's
+        # stable source_url/title, then normal reload validates local state.
+        try:
+            with GarClient(settings) as client:
+                existing = client.get_document(gar_document_id)
+            return resolve_source_doc_from_metadata(
+                Path(settings.ds_search_root).resolve() / "data" / "raw",
+                existing.get("metadata") or {},
+            )
+        except (GarClientError, ReloadError) as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+
+@app.post("/resolve_by_gar_id", dependencies=[Depends(check_auth)])
+def resolve_by_gar_id_endpoint(body: ReloadByGarIdRequest) -> dict:
+    """ds_search перед reload узнаёт, какой локальный документ соответствует
+    gar_document_id (в т.ч. legacy без gar_document_id в sidecar)."""
+    source, doc_id = _resolve_by_gar_id(load_settings(), body.gar_document_id)
+    return {"source": source, "doc_id": doc_id}
+
+
 @app.post("/reload_by_gar_id", dependencies=[Depends(check_auth)])
 def reload_by_gar_id_endpoint(body: ReloadByGarIdRequest) -> dict:
     """Для кнопки в ds_search/ui: резолвит source/doc_id по gar_document_id
     среди всех *.ingested.json, затем делает обычный reload."""
     check_rate_limit(body.gar_document_id)
     settings = load_settings()
-    data_dir = Path(__file__).resolve().parents[2] / "data"
-    try:
-        source, doc_id = resolve_source_doc(data_dir, body.gar_document_id)
-    except ReloadError:
-        # Legacy state files have no GAR IDs. Resolve through the document's
-        # stable source_url/title, then normal reload validates local state.
-        try:
-            with GarClient(settings) as client:
-                existing = client.get_document(body.gar_document_id)
-            source, doc_id = resolve_source_doc_from_metadata(
-                Path(settings.ds_search_root).resolve() / "data" / "raw",
-                existing.get("metadata") or {},
-            )
-        except (GarClientError, ReloadError) as exc:
-            raise HTTPException(404, str(exc)) from exc
-    return _do_reload(settings, source, doc_id, body.gar_document_id)
+    source, doc_id = _resolve_by_gar_id(settings, body.gar_document_id)
+    return _do_reload(settings, source, doc_id, body.gar_document_id, use_recrawl=body.recrawl)

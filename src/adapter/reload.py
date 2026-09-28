@@ -26,7 +26,7 @@ from pathlib import Path
 
 from ..gar_client.client import GarClient, GarClientError
 from .pipeline import (
-    _METADATA_KEYS, _build_select_mapping, _load_state, _normalize_payload, add_reading_time,
+    _METADATA_KEYS, _build_select_mapping, _load_state, _save_state, _normalize_payload, add_reading_time,
 )
 
 logger = logging.getLogger(__name__)
@@ -138,6 +138,13 @@ def _write_manual_recovery(backup_dir: Path, document_id: str, error: Exception)
     )
 
 
+def _local_content(meta: dict, json_path: Path) -> Path:
+    """content_path в sidecar записан ds-search контейнером (/app/data/...);
+    в ds-ingestion тот же файл лежит рядом с .json — берём по имени."""
+    p = Path(meta.get("content_path") or "")
+    return p if p.is_file() else json_path.parent / p.name
+
+
 @dataclass
 class ReloadReport:
     doc_id: str
@@ -158,7 +165,15 @@ def reload_document(
 
     state = _load_state(state_path)
     if doc_id not in state:
-        raise ReloadError(f"doc_id {doc_id!r} not in state ({state_path.name}); run initial ingest first")
+        if not known_gar_document_id:
+            raise ReloadError(f"doc_id {doc_id!r} not in state ({state_path.name}); run initial ingest first")
+        # issue #338-followup: документы, загруженные напрямую через
+        # ds_search/src/gar_ingest (ADR-006), никогда не проходят через
+        # ds_ingestion pipeline и не попадают в {source}.ingested.json —
+        # известный gar_document_id из карточки материала достаточен,
+        # state дозаполняется для последующих reload.
+        state[doc_id] = known_gar_document_id
+        _save_state(state_path, state)
     gar_document_id = state[doc_id] or known_gar_document_id
     if not gar_document_id:
         raise ReloadError(
@@ -212,7 +227,7 @@ def reload_document(
                 {k: meta.get(k) for k in _METADATA_KEYS if meta.get(k) is not None},
                 select_mapping,
             )
-            add_reading_time(new_payload, Path(meta.get("content_path") or ""))
+            add_reading_time(new_payload, _local_content(meta, json_path))
 
     # ADR-0007 п.2: поля, которых нет в новом выводе классификатора, но есть
     # в старой записи (потенциально правились вручную), переносятся as is.
@@ -228,7 +243,7 @@ def reload_document(
         except GarClientError as exc:
             raise ReloadError(f"update failed for {gar_document_id}: {exc}") from exc
 
-        content_path = content_path if recrawl is not None else Path(meta["content_path"])
+        content_path = content_path if recrawl is not None else _local_content(meta, json_path)
         try:
             client.update_document_content(gar_document_id, content_path)
         except GarClientError as exc:
