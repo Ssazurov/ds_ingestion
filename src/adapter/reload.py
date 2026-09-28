@@ -26,7 +26,7 @@ from pathlib import Path
 
 from ..gar_client.client import GarClient, GarClientError
 from .pipeline import (
-    _METADATA_KEYS, _build_select_mapping, _load_state, _normalize_payload, add_reading_time,
+    _METADATA_KEYS, _build_select_mapping, _load_state, _save_state, _normalize_payload, add_reading_time,
 )
 
 logger = logging.getLogger(__name__)
@@ -86,6 +86,18 @@ def resolve_source_doc_from_metadata(raw_dir: Path, metadata: dict) -> tuple[str
     raise ReloadError("no local source/doc_id matches GAR document metadata")
 
 
+def resolve_source_doc_from_sidecar(raw_dir: Path, gar_document_id: str) -> tuple[str, str]:
+    """Документ удалён из GAR, но id остался в sidecar ds_search: ищем по нему."""
+    for json_path in sorted(raw_dir.glob("*/*.json")):
+        try:
+            local = json.loads(json_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(local, dict) and local.get("gar_document_id") == gar_document_id:
+            return json_path.parent.name, json_path.stem
+    raise ReloadError(f"no local source/doc_id found for gar_document_id={gar_document_id!r}")
+
+
 _RELOAD_LOCKS: dict[str, threading.Lock] = {}
 _LOCKS_GUARD = threading.Lock()
 
@@ -138,6 +150,49 @@ def _write_manual_recovery(backup_dir: Path, document_id: str, error: Exception)
     )
 
 
+def _local_content(meta: dict, json_path: Path) -> Path:
+    """content_path в sidecar записан ds-search контейнером (/app/data/...);
+    в ds-ingestion тот же файл лежит рядом с .json — берём по имени."""
+    raw = meta.get("content_path")
+    if not raw:
+        raise ReloadError(f"content_path отсутствует в {json_path.name}")
+    p = Path(raw)
+    local = p if p.is_file() else json_path.parent / p.name
+    if not local.is_file():
+        raise ReloadError(f"файл контента не найден: {local}")
+    return local
+
+
+def _create_missing(client, dataset_id, select_mapping, meta, json_path, state, state_path,
+                    doc_id, old_gar_id) -> "ReloadReport":
+    from .pipeline import apply_publish_permission_default
+    content_path = _local_content(meta, json_path)
+    payload = _normalize_payload(
+        {k: meta.get(k) for k in _METADATA_KEYS if meta.get(k) is not None}, select_mapping,
+    )
+    if "publish_permission" in select_mapping:
+        apply_publish_permission_default(payload)
+    add_reading_time(payload, content_path)
+    try:
+        result = client.ingest_document(
+            dataset_id=dataset_id, file_path=content_path,
+            doc_name=meta.get("title") or doc_id, metadata=payload,
+        )
+    except GarClientError as exc:
+        raise ReloadError(f"create missing document failed for {doc_id}: {exc}") from exc
+    new_id = result.get("document_id")
+    state[doc_id] = new_id
+    _save_state(state_path, state)
+    try:  # best-effort: sidecar принадлежит ds_search
+        meta["gar_document_id"] = new_id
+        json_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError:
+        logger.warning("sidecar %s not updated with new gar_document_id", json_path)
+    logger.info("reload %s: GAR doc %s missing -> created %s", doc_id, old_gar_id, new_id)
+    return ReloadReport(doc_id=doc_id, gar_document_id=new_id, changed_fields=payload,
+                        preserved_fields=[], content_replaced=True)
+
+
 @dataclass
 class ReloadReport:
     doc_id: str
@@ -157,8 +212,19 @@ def reload_document(
         raise ReloadError(f"source doc not found: {json_path}")
 
     state = _load_state(state_path)
+    backfill_state = False
     if doc_id not in state:
-        raise ReloadError(f"doc_id {doc_id!r} not in state ({state_path.name}); run initial ingest first")
+        if not known_gar_document_id:
+            raise ReloadError(f"doc_id {doc_id!r} not in state ({state_path.name}); run initial ingest first")
+        # issue #338-followup: документы, загруженные напрямую через
+        # ds_search/src/gar_ingest (ADR-006), никогда не проходят через
+        # ds_ingestion pipeline и не попадают в {source}.ingested.json —
+        # известный gar_document_id из карточки материала достаточен,
+        # state дозаполняется для последующих reload.
+        # Сохраняем только после успешного update (ниже), иначе неудачный
+        # reload оставит в state ложную привязку doc_id -> gar_id.
+        state[doc_id] = known_gar_document_id
+        backfill_state = True
     gar_document_id = state[doc_id] or known_gar_document_id
     if not gar_document_id:
         raise ReloadError(
@@ -171,6 +237,10 @@ def reload_document(
     try:
         existing = client.get_document(gar_document_id)
     except GarClientError as exc:
+        if exc.status_code == 404:
+            # Документа нет в GAR (удалён/пересоздан) -- создаём заново из локальных файлов.
+            return _create_missing(client, dataset_id, select_mapping, meta, json_path,
+                                   state, state_path, doc_id, gar_document_id)
         raise ReloadError(f"failed to fetch existing document {gar_document_id}: {exc}") from exc
     old_meta = existing.get("metadata") or {}
 
@@ -212,7 +282,7 @@ def reload_document(
                 {k: meta.get(k) for k in _METADATA_KEYS if meta.get(k) is not None},
                 select_mapping,
             )
-            add_reading_time(new_payload, Path(meta.get("content_path") or ""))
+            add_reading_time(new_payload, _local_content(meta, json_path))
 
     # ADR-0007 п.2: поля, которых нет в новом выводе классификатора, но есть
     # в старой записи (потенциально правились вручную), переносятся as is.
@@ -228,7 +298,7 @@ def reload_document(
         except GarClientError as exc:
             raise ReloadError(f"update failed for {gar_document_id}: {exc}") from exc
 
-        content_path = content_path if recrawl is not None else Path(meta["content_path"])
+        content_path = content_path if recrawl is not None else _local_content(meta, json_path)
         try:
             client.update_document_content(gar_document_id, content_path)
         except GarClientError as exc:
@@ -239,6 +309,9 @@ def reload_document(
                     _write_manual_recovery(backup_dir, gar_document_id, rollback_exc)
                 raise ReloadError(f"content replace failed; metadata rollback failed for {gar_document_id}") from exc
             raise ReloadError(f"content replace failed for {gar_document_id}: {exc}") from exc
+
+        if backfill_state:
+            _save_state(state_path, state)
 
         logger.info(
             "reload %s -> %s: changed=%s preserved=%s content_replaced=True",

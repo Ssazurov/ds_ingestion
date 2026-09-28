@@ -1,7 +1,14 @@
 """HTTP-клиент к gar-core-api ingestion/metadata_dictionary (issue #5,
 ADR-001 п.1,2). ds_ingestion не строит свой RAG — использует существующий
 пайплайн GAR (Docling intake -> chunker -> Qdrant) через /ingestion/* и
-/datasets/*/metadata-fields."""
+/datasets/*/metadata-fields.
+
+Есть родственный клиент ds_search/src/gar_ingest/client.py (GarIngestClient)
+— тот же /ingestion/*, для интерактивных сценариев (публикация новости,
+вкладка «Документы»). Раздельны намеренно (ds ADR-0023): разная
+ответственность и деплой, но пересечение (ensure_dataset/ingest_document)
+должно одинаково обрабатывать сетевые ошибки.
+"""
 from __future__ import annotations
 
 import json
@@ -14,6 +21,10 @@ from .config import Settings
 
 class GarClientError(RuntimeError):
     """Ошибка при обращении к gar-core-api."""
+
+    def __init__(self, message: str = "", status_code: int | None = None):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class GarClient:
@@ -112,7 +123,10 @@ class GarClient:
         """issue #8: текущая запись GAR для diff при reload."""
         resp = self._client.get(f"/ingestion/documents/{document_id}")
         if resp.status_code != 200:
-            raise GarClientError(f"get document {document_id} failed: {resp.status_code} {resp.text}")
+            raise GarClientError(
+                f"get document {document_id} failed: {resp.status_code} {resp.text}",
+                status_code=resp.status_code,
+            )
         return resp.json()
 
     def update_document_metadata(self, document_id: str, metadata: dict) -> dict:

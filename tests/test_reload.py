@@ -11,6 +11,7 @@ from src.adapter.reload import (
     ReloadValidationError,
     reload_document,
     resolve_source_doc_from_metadata,
+    _local_content,
 )
 
 
@@ -61,6 +62,7 @@ def _write_state(tmp_path, state):
 
 def test_reload_preserves_manually_edited_fields_not_in_new_output(tmp_path):
     source_dir = _write_source(tmp_path, "doc1", {"title": "New Title", "content_path": "doc1.md"})
+    (source_dir / "doc1.md").write_text("body", encoding="utf-8")
     state_path = _write_state(tmp_path, {"doc1": "gar-1"})
     client = FakeClient(existing_metadata={"title": "Old Title", "reviewed_by": "editor@x"})
 
@@ -71,11 +73,12 @@ def test_reload_preserves_manually_edited_fields_not_in_new_output(tmp_path):
     assert report.preserved_fields == ["reviewed_by"]
     assert report.changed_fields == {"title": "New Title"}
     assert report.content_replaced is True
-    assert str(client.content_path) == "doc1.md"
+    assert client.content_path.name == "doc1.md"
 
 
 def test_reload_content_replace_failure_wraps_client_error(tmp_path):
     source_dir = _write_source(tmp_path, "doc1", {"title": "T", "content_path": "doc1.md"})
+    (source_dir / "doc1.md").write_text("body", encoding="utf-8")
     state_path = _write_state(tmp_path, {"doc1": "gar-1"})
     client = FakeClient(existing_metadata={}, fail_content=True)
     with pytest.raises(ReloadError, match="content replace failed"):
@@ -110,6 +113,9 @@ def test_reload_legacy_state_without_gar_document_id_raises(tmp_path):
 
 def test_reload_update_failure_does_not_raise_reloaderror_wraps_client_error(tmp_path):
     source_dir = _write_source(tmp_path, "doc1", {"title": "T"})
+    source_dir.joinpath("doc1.md").write_text("body", encoding="utf-8")
+    json_path = source_dir / "doc1.json"
+    json_path.write_text(json.dumps({"title": "T", "content_path": "doc1.md"}), encoding="utf-8")
     state_path = _write_state(tmp_path, {"doc1": "gar-1"})
     client = FakeClient(existing_metadata={}, fail_update=True)
     with pytest.raises(ReloadError, match="update failed"):
@@ -298,3 +304,54 @@ def test_recrawl_marks_manual_recovery_when_metadata_rollback_fails(tmp_path):
                         })
     marker = source_dir / ".reload-backups" / "corr-2" / "manual_recovery.json"
     assert json.loads(marker.read_text(encoding="utf-8"))["status"] == "manual_recovery"
+
+
+def test_local_content_resolves_container_path_and_rejects_missing(tmp_path):
+    sidecar = tmp_path / "doc.json"
+    content = tmp_path / "doc.md"
+    content.write_text("body", encoding="utf-8")
+    assert _local_content({"content_path": "/app/data/raw/site/doc.md"}, sidecar) == content
+    with pytest.raises(ReloadError, match="content_path"):
+        _local_content({}, sidecar)
+    with pytest.raises(ReloadError, match="не найден"):
+        _local_content({"content_path": "/app/data/raw/site/absent.md"}, sidecar)
+
+
+def test_reload_backfills_state_only_after_success(tmp_path):
+    source_dir = _write_source(tmp_path, "doc1", {"title": "T", "content_path": "doc1.md"})
+    (source_dir / "doc1.md").write_text("body", encoding="utf-8")
+    state_path = _write_state(tmp_path, {})
+    reload_document(FakeClient(existing_metadata={}), "dataset-1", source_dir, state_path, "doc1", "gar-new")
+    assert json.loads(state_path.read_text(encoding="utf-8")) == {"doc1": "gar-new"}
+
+    failed_dir = tmp_path / "failed"
+    failed_dir.mkdir()
+    failed_source = _write_source(failed_dir, "doc1", {"title": "T", "content_path": "doc1.md"})
+    (failed_source / "doc1.md").write_text("body", encoding="utf-8")
+    failed_state = _write_state(failed_dir, {})
+    with pytest.raises(ReloadError, match="update failed"):
+        reload_document(FakeClient({}, fail_update=True), "dataset-1", failed_source,
+                        failed_state, "doc1", "gar-new")
+    assert json.loads(failed_state.read_text(encoding="utf-8")) == {}
+
+
+class Missing404Client(FakeClient):
+    def get_document(self, document_id):
+        from src.gar_client.client import GarClientError
+        raise GarClientError("not found", status_code=404)
+
+    def ingest_document(self, dataset_id, file_path, doc_name, metadata):
+        self.calls.append(("ingest", doc_name))
+        return {"document_id": "gar-created"}
+
+
+def test_reload_creates_document_when_gar_returns_404(tmp_path):
+    source_dir = _write_source(tmp_path, "doc1", {"title": "T", "content_path": "doc1.md",
+                                                 "gar_document_id": "gone"})
+    (source_dir / "doc1.md").write_text("body", encoding="utf-8")
+    state_path = _write_state(tmp_path, {"doc1": "gone"})
+    report = reload_document(Missing404Client({}), "dataset-1", source_dir, state_path, "doc1")
+    assert report.gar_document_id == "gar-created"
+    assert json.loads(state_path.read_text(encoding="utf-8")) == {"doc1": "gar-created"}
+    sidecar = json.loads((source_dir / "doc1.json").read_text(encoding="utf-8"))
+    assert sidecar["gar_document_id"] == "gar-created"
