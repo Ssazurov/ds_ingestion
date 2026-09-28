@@ -333,3 +333,25 @@ def test_reload_backfills_state_only_after_success(tmp_path):
         reload_document(FakeClient({}, fail_update=True), "dataset-1", failed_source,
                         failed_state, "doc1", "gar-new")
     assert json.loads(failed_state.read_text(encoding="utf-8")) == {}
+
+
+class Missing404Client(FakeClient):
+    def get_document(self, document_id):
+        from src.gar_client.client import GarClientError
+        raise GarClientError("not found", status_code=404)
+
+    def ingest_document(self, dataset_id, file_path, doc_name, metadata):
+        self.calls.append(("ingest", doc_name))
+        return {"document_id": "gar-created"}
+
+
+def test_reload_creates_document_when_gar_returns_404(tmp_path):
+    source_dir = _write_source(tmp_path, "doc1", {"title": "T", "content_path": "doc1.md",
+                                                 "gar_document_id": "gone"})
+    (source_dir / "doc1.md").write_text("body", encoding="utf-8")
+    state_path = _write_state(tmp_path, {"doc1": "gone"})
+    report = reload_document(Missing404Client({}), "dataset-1", source_dir, state_path, "doc1")
+    assert report.gar_document_id == "gar-created"
+    assert json.loads(state_path.read_text(encoding="utf-8")) == {"doc1": "gar-created"}
+    sidecar = json.loads((source_dir / "doc1.json").read_text(encoding="utf-8"))
+    assert sidecar["gar_document_id"] == "gar-created"
