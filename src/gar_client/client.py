@@ -22,6 +22,10 @@ from .config import Settings
 class GarClientError(RuntimeError):
     """Ошибка при обращении к gar-core-api."""
 
+    def __init__(self, message: str = "", status_code: int | None = None):
+        super().__init__(message)
+        self.status_code = status_code
+
 
 class GarClient:
     def __init__(self, settings: Settings):
@@ -119,7 +123,10 @@ class GarClient:
         """issue #8: текущая запись GAR для diff при reload."""
         resp = self._client.get(f"/ingestion/documents/{document_id}")
         if resp.status_code != 200:
-            raise GarClientError(f"get document {document_id} failed: {resp.status_code} {resp.text}")
+            raise GarClientError(
+                f"get document {document_id} failed: {resp.status_code} {resp.text}",
+                status_code=resp.status_code,
+            )
         return resp.json()
 
     def update_document_metadata(self, document_id: str, metadata: dict) -> dict:

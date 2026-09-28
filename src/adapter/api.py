@@ -25,6 +25,7 @@ from .reload import (
     reload_document,
     resolve_source_doc,
     resolve_source_doc_from_metadata,
+    resolve_source_doc_from_sidecar,
 )
 
 app = FastAPI(title="ds_ingestion")
@@ -124,7 +125,12 @@ def _resolve_by_gar_id(settings, gar_document_id: str) -> tuple[str, str]:
                 existing.get("metadata") or {},
             )
         except (GarClientError, ReloadError) as exc:
-            raise HTTPException(404, str(exc)) from exc
+            # документа нет в GAR -- берём source/doc_id из sidecar по gar_document_id
+            try:
+                return resolve_source_doc_from_sidecar(
+                    Path(settings.ds_search_root).resolve() / "data" / "raw", gar_document_id)
+            except ReloadError:
+                raise HTTPException(404, str(exc)) from exc
 
 
 @app.post("/resolve_by_gar_id", dependencies=[Depends(check_auth)])

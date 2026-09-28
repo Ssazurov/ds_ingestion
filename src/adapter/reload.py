@@ -86,6 +86,18 @@ def resolve_source_doc_from_metadata(raw_dir: Path, metadata: dict) -> tuple[str
     raise ReloadError("no local source/doc_id matches GAR document metadata")
 
 
+def resolve_source_doc_from_sidecar(raw_dir: Path, gar_document_id: str) -> tuple[str, str]:
+    """Документ удалён из GAR, но id остался в sidecar ds_search: ищем по нему."""
+    for json_path in sorted(raw_dir.glob("*/*.json")):
+        try:
+            local = json.loads(json_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(local, dict) and local.get("gar_document_id") == gar_document_id:
+            return json_path.parent.name, json_path.stem
+    raise ReloadError(f"no local source/doc_id found for gar_document_id={gar_document_id!r}")
+
+
 _RELOAD_LOCKS: dict[str, threading.Lock] = {}
 _LOCKS_GUARD = threading.Lock()
 
@@ -151,6 +163,36 @@ def _local_content(meta: dict, json_path: Path) -> Path:
     return local
 
 
+def _create_missing(client, dataset_id, select_mapping, meta, json_path, state, state_path,
+                    doc_id, old_gar_id) -> "ReloadReport":
+    from .pipeline import apply_publish_permission_default
+    content_path = _local_content(meta, json_path)
+    payload = _normalize_payload(
+        {k: meta.get(k) for k in _METADATA_KEYS if meta.get(k) is not None}, select_mapping,
+    )
+    if "publish_permission" in select_mapping:
+        apply_publish_permission_default(payload)
+    add_reading_time(payload, content_path)
+    try:
+        result = client.ingest_document(
+            dataset_id=dataset_id, file_path=content_path,
+            doc_name=meta.get("title") or doc_id, metadata=payload,
+        )
+    except GarClientError as exc:
+        raise ReloadError(f"create missing document failed for {doc_id}: {exc}") from exc
+    new_id = result.get("document_id")
+    state[doc_id] = new_id
+    _save_state(state_path, state)
+    try:  # best-effort: sidecar принадлежит ds_search
+        meta["gar_document_id"] = new_id
+        json_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError:
+        logger.warning("sidecar %s not updated with new gar_document_id", json_path)
+    logger.info("reload %s: GAR doc %s missing -> created %s", doc_id, old_gar_id, new_id)
+    return ReloadReport(doc_id=doc_id, gar_document_id=new_id, changed_fields=payload,
+                        preserved_fields=[], content_replaced=True)
+
+
 @dataclass
 class ReloadReport:
     doc_id: str
@@ -195,6 +237,10 @@ def reload_document(
     try:
         existing = client.get_document(gar_document_id)
     except GarClientError as exc:
+        if exc.status_code == 404:
+            # Документа нет в GAR (удалён/пересоздан) -- создаём заново из локальных файлов.
+            return _create_missing(client, dataset_id, select_mapping, meta, json_path,
+                                   state, state_path, doc_id, gar_document_id)
         raise ReloadError(f"failed to fetch existing document {gar_document_id}: {exc}") from exc
     old_meta = existing.get("metadata") or {}
 
