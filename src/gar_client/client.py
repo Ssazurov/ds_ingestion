@@ -1,7 +1,14 @@
 """HTTP-клиент к gar-core-api ingestion/metadata_dictionary (issue #5,
 ADR-001 п.1,2). ds_ingestion не строит свой RAG — использует существующий
 пайплайн GAR (Docling intake -> chunker -> Qdrant) через /ingestion/* и
-/datasets/*/metadata-fields."""
+/datasets/*/metadata-fields.
+
+Есть родственный клиент ds_search/src/gar_ingest/client.py (GarIngestClient)
+— тот же /ingestion/*, для интерактивных сценариев (публикация новости,
+вкладка «Документы»). Раздельны намеренно (ds ADR-0023): разная
+ответственность и деплой, но пересечение (ensure_dataset/ingest_document)
+должно одинаково обрабатывать сетевые ошибки.
+"""
 from __future__ import annotations
 
 import json
