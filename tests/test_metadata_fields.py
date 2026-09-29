@@ -23,12 +23,11 @@ def test_text_fields_include_new_optional_keys():
         assert keys[key] is False, f"{key} must be optional per ADR-0002"
 
 
-def test_ensure_domain_schema_registers_lifecycle_stage_select():
+def test_ensure_domain_schema_registers_text_fields_and_no_lifecycle_stage():
     client = FakeClient()
     ensure_domain_schema(client, "ds-1", DS_SEARCH_ROOT)
     by_key = {c[0]: c for c in client.calls}
-    assert by_key["lifecycle_stage"][1] == "select"
-    assert "unspecified" in by_key["lifecycle_stage"][3]
+    assert "lifecycle_stage" not in by_key  # ADR-0022
     for key in ("date_indexed", "comorbidity_tags", "reviewed_by"):
         assert by_key[key][1] == "text"
         assert by_key[key][2] is False
