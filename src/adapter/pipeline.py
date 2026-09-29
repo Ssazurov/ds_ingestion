@@ -32,7 +32,7 @@ _METADATA_KEYS = (
     # issue #2, ADR-0002: обязательные для end-to-end ingestion поля.
     # comorbidity_tags/reviewed_by опциональны — пустая строка допустима,
     # поэтому не исключаются `meta.get(k) is not None` ниже, если явно "".
-    "date_indexed", "lifecycle_stage", "comorbidity_tags", "reviewed_by",
+    "date_indexed", "comorbidity_tags", "reviewed_by",
     # issue #35, ADR-0018: разрешение источника на публикацию (наследуется
     # документом из sidecar; ручной override в GAR сохраняет reload).
     "publish_permission",
@@ -45,7 +45,7 @@ _METADATA_KEYS = (
 # Select-поля, которые нужно нормализовать под актуальные опции GAR
 # (значения в sidecar-json могут быть русскими label, а backend ожидает value).
 _NORMALIZE_SELECT_KEYS = (
-    "direction", "category", "doc_type", "target_audience", "license", "lifecycle_stage",
+    "direction", "category", "doc_type", "target_audience", "license",
     "publish_permission",
 )
 
