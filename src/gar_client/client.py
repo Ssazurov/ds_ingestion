@@ -11,6 +11,7 @@ ADR-001 п.1,2). ds_ingestion не строит свой RAG — использ�
 """
 from __future__ import annotations
 
+import os
 import json
 from pathlib import Path
 
@@ -30,6 +31,8 @@ class GarClientError(RuntimeError):
 class GarClient:
     def __init__(self, settings: Settings):
         headers = {"X-User-ID": settings.user_id}
+        if os.getenv("GAR_API_KEY"):
+            headers["X-API-Key"] = os.environ["GAR_API_KEY"]
         if settings.tenant_id:
             headers["X-Tenant-ID"] = settings.tenant_id
         self._client = httpx.Client(
