@@ -10,6 +10,17 @@ def test_metadata_keys_include_adr0002_fields():
         assert key in _METADATA_KEYS
 
 
+def test_metadata_keys_include_tags():
+    """issue #31, ADR-0015/ADR-0028: tags проходит из sidecar в payload как есть."""
+    assert "tags" in _METADATA_KEYS
+
+
+def test_metadata_payload_passes_through_tags_list():
+    meta = {"title": "doc", "tags": ["Эпилепсия", "эпилепсия ", "сон"]}
+    payload = {k: meta.get(k) for k in _METADATA_KEYS if meta.get(k) is not None}
+    assert payload["tags"] == ["Эпилепсия", "эпилепсия ", "сон"]
+
+
 def test_normalize_payload_keeps_empty_text_fields():
     mapping = {}
     payload = {
