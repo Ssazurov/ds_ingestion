@@ -5,3 +5,4 @@ __pycache__/
 venv/
 logs/
 data/*.ingested.json
+tmp/
