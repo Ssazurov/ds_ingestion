@@ -36,6 +36,13 @@ _METADATA_KEYS = (
     # issue #35, ADR-0018: разрешение источника на публикацию (наследуется
     # документом из sidecar; ручной override в GAR сохраняет reload).
     "publish_permission",
+    # issue #31, ADR-0015/ADR-0028: multi-value теги. Источник значений в
+    # sidecar-json — вне скоупа ADR-0015 (отдельная задача, ds_search#483);
+    # здесь только пробрасываем list[str], если он уже есть. metadata в
+    # gar-core-api свободная JSON (routers/ingestion.py: json.loads(metadata)),
+    # нормализация (lowercase/ё→е/dedup) — на стороне gar-core-api при чтении
+    # (services/tags.normalize_tag), на запись не требуется.
+    "tags",
 )
 # "age_group" -- устаревший текстовый ключ, неактивен в текущем словаре
 # metadata-fields sindrom-dauna (см. GET /datasets/.../metadata-fields);
